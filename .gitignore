@@ -1,0 +1,17 @@
+build
+!.vscode/*
+
+# Space Invaders arcade ROM dump (Taito/Midway, 1978) - copyrighted, not
+# redistributed in this repo. Supply your own legally-obtained dump - see
+# roms/README.md. CMake embeds it into the firmware image at build time.
+roms/*
+!roms/README.md
+
+# Sound-effect PCM data (see sounds/README.md) - not vendored, since the
+# real cabinet's sounds came from discrete analog circuitry, not a sample
+# ROM. Supply your own recordings/conversions. CMake embeds them into the
+# firmware image at build time.
+sounds/*
+!sounds/README.md
+
+
