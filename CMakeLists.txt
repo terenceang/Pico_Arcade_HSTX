@@ -118,6 +118,7 @@ target_include_directories(Space_Invader_PICO PRIVATE
 
 target_compile_definitions(Space_Invader_PICO PRIVATE
         SPACE_INVADER_PICO_VERSION="${PROJECT_VERSION}"
+        VIDEO_MODE_320x240
 )
 
 pico_generate_pio_header(Space_Invader_PICO ${CMAKE_CURRENT_LIST_DIR}/src/input/snes_controller.pio)

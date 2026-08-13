@@ -1,6 +1,10 @@
 #ifndef DISPLAY_CONFIG_H
 #define DISPLAY_CONFIG_H
 
+#ifndef VIDEO_MODE_320x240
+#define VIDEO_MODE_320x240
+#endif
+
 #include "pico_hdmi/video_output.h"
 
 // Framebuffer resolution (320x240 8bpp palettized)
