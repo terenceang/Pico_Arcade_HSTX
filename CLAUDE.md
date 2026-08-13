@@ -115,16 +115,25 @@ The essentials:
 
 **Hardware HSTX on RP2350:** Video output and HDMI Data Island audio are driven by
 `lib/pico_hdmi` - a high-performance RP2350 hardware HSTX driver utilizing GPIO 12-19,
-640x480p60 output, 320x240 8bpp palettized framebuffer, and 32 kHz stereo PCM HDMI embedded audio.
+640x480p60 output, 320x240 8bpp palettized framebuffer, and 48 kHz stereo PCM HDMI embedded audio.
 
 **System Architecture**:
-- **Core 0** (`main.c`): scanline / frame producer & CPU emulator. Updates the 320x240 8-bit
-  palette-indexed framebuffer (`fb`) and pushes 32 kHz PCM audio samples via `audio_i2s_step_frame()`.
-- **HSTX Engine** (`pico_hdmi`): converts 8bpp framebuffer to RGB565 via scanline callback (`dvi_scanline_cb`),
-  hardware TMDS-encodes scanlines over HSTX, and injects audio Data Islands during H-blanking.
+- **Core 0** (`main.c`, `dvi_display.c`): scanline/frame producer & CPU emulator. Updates the
+  320x240 8-bit palette-indexed framebuffer (`fb`), converts the whole frame to pre-packed RGB565
+  once per frame (`dvi_display_convert_frame()`), and pushes 48 kHz PCM audio samples via
+  `audio_i2s_feed_queue()` (called repeatedly through the frame, not as one burst).
+- **HSTX Engine** (`pico_hdmi`, Core 1): `dvi_scanline_ptr_cb()` - a scanline *pointer* callback,
+  not a fill callback - just returns the address of the frame Core 0 already converted, doing zero
+  per-pixel work on this time-critical path. Hardware TMDS-encodes scanlines over HSTX, and injects
+  audio Data Islands during H-blanking. **This split matters**: Core 1's ISR previously did the
+  8bpp->RGB565 palette lookup itself, which fit pure-DVI mode's per-line budget but not HDMI mode's
+  (Data Island construction shares that budget) and caused total, permanent loss of HDMI signal
+  lock - not just missing/glitchy audio. See `Video.md`'s pipeline overview before changing either
+  side of this split.
 
 **Resolution scaling & Palette LUT**:
-Logical 320x240 8bpp framebuffer is converted to RGB565 and scaled to 640x480 wire timing via HSTX pixel doubling.
+Logical 320x240 8bpp framebuffer is converted to RGB565 and doubled to 640x480 wire timing in
+software during the Core 0 conversion pass (not HSTX hardware pixel-doubling - see Video.md).
 256 palette entries (0xRRGGBB) are mapped via `dvi_display_set_palette()`.
 
 ### File map
@@ -140,7 +149,7 @@ Logical 320x240 8bpp framebuffer is converted to RGB565 and scaled to 640x480 wi
 | `cmake/generate_rom.cmake` | Embeds `roms/invaders.{h,g,f,e}` into a linkable C array at build time |
 | `src/video/` | Video & display pipeline (`dvi_display.c`/`.h`, `display_config.h`, `testcard.c`/`.h`, `controller_testcard.c`/`.h`) |
 | `lib/pico_hdmi/` | Core RP2350 hardware HSTX DVI + HDMI Data Island audio driver library |
-| `src/audio/audio_i2s.c` / `.h` | Software audio mixer - mixes sound-effect voices into 32 kHz stereo PCM and pushes Data Islands |
+| `src/audio/audio_i2s.c` / `.h` | Software audio mixer - mixes sound-effect voices into 48 kHz stereo PCM and pushes Data Islands |
 | `src/audio/sound_effects.c` / `.h` | Decodes port 3/5 sound-effect bits into `audio_i2s_*` calls |
 | `src/audio/sound_data.h` | `sound_id_t` enum + `sound_sample_t`/`sound_table[]` declarations |
 | `sounds/` | User-supplied sound-effect PCM files |

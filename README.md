@@ -2,16 +2,16 @@
 
 **Version: 1.0.0**
 
-A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 CPU, memory map, I/O ports and shift-register sprite hardware) for the [Raspberry Pi Pico 2](https://www.raspberrypi.com/products/raspberry-pi-pico-2/), written in C against the Raspberry Pi Pico SDK, driving palettized DVI/HDMI video output and 32 kHz PCM audio over HDMI. This runs the *actual* arcade ROM (user-supplied - see [`roms/README.md`](roms/README.md)), not a from-scratch reimplementation of the game logic.
+A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 CPU, memory map, I/O ports and shift-register sprite hardware) for the [Raspberry Pi Pico 2](https://www.raspberrypi.com/products/raspberry-pi-pico-2/), written in C against the Raspberry Pi Pico SDK, driving palettized DVI/HDMI video output and 48 kHz PCM audio over HDMI. This runs the *actual* arcade ROM (user-supplied - see [`roms/README.md`](roms/README.md)), not a from-scratch reimplementation of the game logic.
 
-**Status: Feature Complete.** Palettized 8bpp HDMI video, 32 kHz stereo PCM embedded HDMI audio (Data Islands), Intel 8080 CPU emulation core, arcade VRAM/port mapping, SNES-controller input, and sound-effect mixer are fully integrated and verified working. See [`Emulator.md`](Emulator.md) and [`Video.md`](Video.md).
+**Status: Feature Complete.** Palettized 8bpp HDMI video, 48 kHz stereo PCM embedded HDMI audio (Data Islands), Intel 8080 CPU emulation core, arcade VRAM/port mapping, SNES-controller input, and sound-effect mixer are fully integrated and verified working. See [`Emulator.md`](Emulator.md) and [`Video.md`](Video.md).
 
 ## What's here right now
 
 - An Intel 8080 CPU interpreter and Space Invaders arcade machine emulation (`src/emu/`) - full instruction set, real port/shift-register hardware, running the unmodified original ROM. See [`Emulator.md`](Emulator.md).
 - A high-performance palettized DVI/HDMI output engine (`lib/pico_hdmi`) - RP2350 hardware HSTX driven (see [`Video.md`](Video.md)).
 - A 320x240 8bpp palettized framebuffer (75 KB SRAM), scaled 2x to the board's fixed 640x480p60 DVI timing. The emulated machine's 256x224 video RAM is un-rotated and letterboxed into it, with the classic red/white/green cabinet overlay tint reproduced at the video-conversion stage.
-- Embedded 32 kHz stereo PCM HDMI Data Island audio transport, driven without external I2S hardware directly over HDMI.
+- Embedded 48 kHz stereo PCM HDMI Data Island audio transport, driven without external I2S hardware directly over HDMI.
 - A debug test card (color bars, grayscale ramp, moving sync bar) for verifying the display pipeline independent of any game code.
 
 ## Hardware
@@ -56,7 +56,7 @@ By default, the app boots straight into the game (`DEBUG_TESTCARD 0` in `src/dis
 | `roms/` | Where you put the real arcade ROM (gitignored, not vendored - see `roms/README.md`) |
 | `src/video/` | Video & display pipeline (`dvi_display.c`/`.h`, `display_config.h`, `testcard.c`/`.h`, `controller_testcard.c`/`.h`) |
 | `lib/pico_hdmi/` | RP2350 hardware HSTX DVI + HDMI Data Island audio driver library |
-| `src/audio/audio_i2s.c` / `.h` | Software audio mixer & 32 kHz PCM frame batch generator |
+| `src/audio/audio_i2s.c` / `.h` | Software audio mixer & 48 kHz PCM frame batch generator |
 | `Hardware.md` | Board pinout and hardware specs |
 | `Video.md` | How the HSTX HDMI pipeline works, wall-clock timekeeping, RGB565 conversion |
 | `Emulator.md` | How the 8080 CPU core + arcade machine emulation works, video RAM rotation, known limitations |
@@ -64,7 +64,7 @@ By default, the app boots straight into the game (`DEBUG_TESTCARD 0` in `src/dis
 ## Roadmap
 
 - [x] Hardware HSTX HDMI bring-up on Raspberry Pi Pico 2 (GPIO 12-19)
-- [x] High-performance 8bpp palettized DVI engine & 32 kHz stereo PCM embedded HDMI audio (`lib/pico_hdmi`)
+- [x] High-performance 8bpp palettized DVI engine & 48 kHz stereo PCM embedded HDMI audio (`lib/pico_hdmi`)
 - [x] Intel 8080 CPU core + Space Invaders arcade machine emulation, running the real ROM
 - [x] Video RAM → framebuffer conversion (8bpp indexed, letterboxing, color overlay)
 - [x] SNES controller input wired to `invaders_machine_set_in1()`

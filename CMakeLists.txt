@@ -43,14 +43,6 @@ pico_sdk_init()
 # Add pico_hdmi library for HSTX HDMI video & audio
 add_subdirectory(lib/pico_hdmi)
 
-# Diagnostic: force HDMI Data Islands into the back porch instead of the
-# hsync pulse. pico_hdmi's own default for this mode's 96px hsync width
-# places Data Islands inside the hsync pulse; some HDMI sinks are known to
-# mis-sync specifically on that placement (see video_output.h's DI_IN_HSYNC
-# comment) - this is a real lever for testing that hypothesis, off by
-# default (matches the library's own default/proven behavior).
-option(SI_FORCE_DI_BACK_PORCH "Force HDMI Data Islands into the back porch instead of the hsync pulse" OFF)
-
 # ----------------------------------------------------------------------------
 # Space Invaders arcade ROM: embedded into the flash image at build time from
 # files the user supplies locally in roms/ (not vendored - it's Taito's
@@ -101,9 +93,11 @@ add_dependencies(Space_Invader_PICO si_generate_rom si_generate_sounds)
 pico_set_program_name(Space_Invader_PICO "Space_Invader_PICO")
 pico_set_program_version(Space_Invader_PICO "${PROJECT_VERSION}")
 
-# TEMP diagnostic: UART stdio off (USB only), matching lib/pico_hdmi's own
-# bouncing_box reference example exactly - testing whether the UART driver's
-# ISR is contending with the time-critical HSTX DMA IRQ. Was 1/1 (both on).
+# UART stdio off (USB only) - matches lib/pico_hdmi's own bouncing_box
+# reference example. The time-critical HSTX DMA IRQ (dma_irq_handler in
+# video_output.c) runs at the highest NVIC priority, but this keeps a
+# second interrupt-driven driver off the board entirely rather than relying
+# on priority alone.
 pico_enable_stdio_uart(Space_Invader_PICO 0)
 pico_enable_stdio_usb(Space_Invader_PICO 1)
 
@@ -130,16 +124,6 @@ target_include_directories(Space_Invader_PICO PRIVATE
 target_compile_definitions(Space_Invader_PICO PRIVATE
         SPACE_INVADER_PICO_VERSION="${PROJECT_VERSION}"
 )
-
-if(SI_FORCE_DI_BACK_PORCH)
-    # Must apply identically to both targets - pico_hdmi's video_output.c
-    # (which places Data Islands on the wire) and Space_Invader_PICO's own
-    # audio_i2s.c (which encodes them via the same DI_HSYNC_ACTIVE macro) -
-    # or the two disagree about where Data Islands are and audio playback
-    # corrupts the whole stream.
-    target_compile_definitions(pico_hdmi PRIVATE DI_IN_HSYNC=0 DI_HSYNC_ACTIVE=false)
-    target_compile_definitions(Space_Invader_PICO PRIVATE DI_IN_HSYNC=0 DI_HSYNC_ACTIVE=false)
-endif()
 
 pico_generate_pio_header(Space_Invader_PICO ${CMAKE_CURRENT_LIST_DIR}/src/input/snes_controller.pio)
 

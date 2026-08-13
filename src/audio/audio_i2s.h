@@ -21,14 +21,20 @@
 #define AUDIO_SAMPLE_RATE 48000
 #define AUDIO_FRAMES_PER_VIDEO_FRAME (AUDIO_SAMPLE_RATE / DISPLAY_REFRESH_HZ)
 
+// Default HDMI audio queue fill target for audio_i2s_feed_queue() - well
+// under the pico_hdmi ring buffer's 256-entry capacity (DI_RING_BUFFER_SIZE
+// in hstx_data_island_queue.c), matching pico_hdmi's own bouncing_box
+// reference example's cadence.
+#define AUDIO_QUEUE_TARGET_LEVEL 200
+
 // Resets the software mixer's voice state. Call once, before the main
 // loop starts calling audio_i2s_step_frame().
 void audio_i2s_init(void);
 
 // Steps the software audio mixer per frame (AUDIO_FRAMES_PER_VIDEO_FRAME
 // samples) and pushes the audio Data Island packets to the HSTX queue.
-// Equivalent to audio_i2s_feed_queue(200) - kept for callers that only need
-// a once-per-frame top-up.
+// Equivalent to audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL) - kept for
+// callers that only need a once-per-frame top-up.
 void audio_i2s_step_frame(void);
 
 // Mixes and pushes 4-sample Data Island packets until the HDMI audio queue
@@ -62,7 +68,7 @@ void audio_i2s_set_sound_loop(sound_id_t sound_id, bool active);
 
 #if DEBUG_AUDIO_TEST_TONE
 // Hardware bring-up helper only (see display_config.h's
-// DEBUG_AUDIO_TEST_TONE) - starts a continuous ~441Hz test tone on a
+// DEBUG_AUDIO_TEST_TONE) - starts a continuous 1kHz test tone on a
 // dedicated debug voice, entirely separate from the real one-shot/loop
 // voices, so nothing the emulated machine's port 3/5 writes do can
 // interrupt it. Call once, after audio_i2s_init(). Meant for confirming the

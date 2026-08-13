@@ -7,6 +7,7 @@
 
 #include "dvi_display.h"
 #include "display_config.h"
+#include "audio_i2s.h"
 
 #include "pico_hdmi/video_output.h"
 #include "pico_hdmi/hstx_data_island_queue.h"
@@ -19,6 +20,7 @@
 // ringing/overshoot on marginal wiring rather than better margin - testing
 // parity with the proven reference config.
 #define VREG_VSEL       VREG_VOLTAGE_1_10
+#define VREG_VSEL_STR   "1.10V" // Keep in sync with VREG_VSEL above - debug print only
 #define DVI_SYS_CLK_KHZ 126000
 
 static uint8_t *display_fb = NULL;
@@ -75,6 +77,7 @@ void dvi_display_set_buffer(uint8_t *buffer) {
 
 void dvi_display_init(void) {
     uint32_t actual_clk = clock_get_hz(clk_sys);
+    printf("[DEBUG] Core Voltage   : %s\n", VREG_VSEL_STR);
     printf("[DEBUG] System Clock   : %lu Hz (Requested: %u kHz)\n", actual_clk, DVI_SYS_CLK_KHZ);
     printf("[DEBUG] --- HSTX HDMI Pinout Configuration (User Specific Wiring) ---\n");
     printf("[DEBUG] D0: 12(P)/13(N), CK: 14(P)/15(N), D2: 16(P)/17(N), D1: 18(P)/19(N)\n");
@@ -106,7 +109,7 @@ void dvi_display_init(void) {
     hstx_di_queue_init();
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
     video_output_set_dvi_mode(false); // HDMI mode: Data Islands + audio enabled
-    pico_hdmi_set_audio_sample_rate(48000);
+    pico_hdmi_set_audio_sample_rate(AUDIO_SAMPLE_RATE);
     video_output_set_scanline_pointer_callback(dvi_scanline_ptr_cb);
 
     printf("[DEBUG] pico_hdmi HSTX driver initialized successfully.\n");

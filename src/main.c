@@ -25,9 +25,8 @@ int main() {
     printf("  Space Invader PICO  v%s\n", SPACE_INVADER_PICO_VERSION);
     printf("==================================================\n");
     printf("[DEBUG] Microcontroller: RP2350 (Cortex-M33)\n");
-    printf("[DEBUG] Core Voltage   : 1.25V\n");
 
-    dvi_display_init();
+    dvi_display_init(); // prints the actual core voltage - see dvi_display.c's VREG_VSEL
 
 #if DEBUG_TESTCARD
     testcard_init();
@@ -49,7 +48,7 @@ int main() {
 #endif
 
     printf("[DEBUG] Pre-filling audio Data Island queue...\n");
-    audio_i2s_feed_queue(200);
+    audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
 
     dvi_display_set_buffer(fb);
 
@@ -58,7 +57,8 @@ int main() {
     sleep_ms(100);
     printf("[DEBUG] Core 1 launched.\n");
 
-    printf("\n[STATUS] Rendering HSTX HDMI 640x480 @ 60Hz (320x240 8bpp palettized + HDMI Audio)...\n");
+    printf("\n[STATUS] Rendering HSTX HDMI 640x480 @ %dHz (%dx%d 8bpp palettized + HDMI Audio)...\n",
+           DISPLAY_REFRESH_HZ, FRAME_WIDTH, FRAME_HEIGHT);
 
     const uint64_t CHUNK_US = (uint64_t)AUDIO_FRAMES_PER_VIDEO_FRAME * 1000000ull / AUDIO_SAMPLE_RATE;
 
@@ -71,7 +71,7 @@ int main() {
 #endif
 
     while (true) {
-        audio_i2s_feed_queue(200);
+        audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
         ++chunks_pushed;
 
 #if DEBUG_TESTCARD
@@ -94,7 +94,7 @@ int main() {
                 // Keep the HDMI audio queue continuously topped up across
                 // the frame instead of front-loading it once per frame -
                 // matches pico_hdmi's own bouncing_box reference example.
-                audio_i2s_feed_queue(200);
+                audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
             }
             uint8_t *dst = fb + y * FRAME_WIDTH;
 #if DEBUG_TESTCARD

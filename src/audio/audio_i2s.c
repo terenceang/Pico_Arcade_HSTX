@@ -118,7 +118,7 @@ void audio_i2s_feed_queue(uint32_t target_level) {
 }
 
 void audio_i2s_step_frame(void) {
-    audio_i2s_feed_queue(200);
+    audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
 }
 
 void audio_i2s_set_mute(bool mute) {

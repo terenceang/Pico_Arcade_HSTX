@@ -47,7 +47,7 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 | Parameter | Value | Details |
 | :--- | :--- | :--- |
 | **Target Architecture** | `rp2350-arm-s` | ARM Cortex-M33 |
-| **Core Voltage ($V_{REG}$)** | `1.20V` | Standard nominal supply voltage |
+| **Core Voltage ($V_{REG}$)** | `1.10V` | RP2350 power-on default (`VREG_VOLTAGE_1_10`) |
 | **System Clock ($f_{SYS}$)** | `126.000 MHz` | System clock for 25.2 MHz pixel clock via HSTX divider |
 | **Video Timing** | 640x480 @ 60Hz | CEA-861 DVI standard timing (25.2 MHz pixel clock) |
 | **Framebuffer Resolution** | 320x240 @ 8bpp | 8-bit palette-indexed (75 KB SRAM), scaled 2x to 640x480 |
@@ -59,13 +59,22 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 
 ### Dual-Core & Hardware Allocation
 * **Core 0**:
-  * Initializes system clock (126 MHz), voltage regulator (1.20V), and stdio (USB CDC + UART).
+  * Initializes system clock (126 MHz), voltage regulator (1.10V), and stdio (USB CDC only - UART is disabled, see CMakeLists.txt).
   * Executes Intel 8080 CPU emulation & SNES controller input decoding.
   * Renders 8bpp scanlines directly into `fb` (`game_render_scanline()`).
-  * Generates 32 kHz PCM audio samples in per-frame batches (`audio_i2s_step_frame()`) and pushes HDMI Data Islands to `pico_hdmi`.
+  * Converts the whole 8bpp frame to pre-packed RGB565 once per frame
+    (`dvi_display_convert_frame()`) - deliberately kept off Core 1's ISR,
+    which used to do this lookup per pixel and blew HDMI mode's per-line
+    timing budget (Data Island construction shares that budget) - see
+    Video.md's pipeline overview.
+  * Generates 48 kHz PCM audio samples and pushes HDMI Data Islands to
+    `pico_hdmi` (`audio_i2s_feed_queue()`), called repeatedly through the
+    frame rather than as a single once-per-frame burst.
   * Microsecond wall-clock anchored loop (`sleep_until()`).
 * **HSTX Engine & DMA (`pico_hdmi`)**:
-  * Converts 8bpp palette indices to RGB565 via `dvi_scanline_cb`.
+  * `dvi_scanline_ptr_cb` (a scanline *pointer* callback) returns the
+    address of the frame Core 0 already converted - no per-pixel work on
+    this time-critical path.
   * Hardware TMDS encoding via RP2350 HSTX peripheral.
   * DMA streams scanline buffers and HDMI Data Island packets (Audio samples, InfoFrames, ACR) during H-blanking/sync.
 
@@ -79,14 +88,14 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 
 ## Serial Terminal Diagnostics Output
 
-Connecting a serial terminal (such as VS Code Serial Monitor or TeraTerm) over either the USB CDC port or UART0 (GPIO0/GPIO1, `115200` baud) displays hardware status:
+Connecting a serial terminal (such as VS Code Serial Monitor or TeraTerm) over the USB CDC port displays hardware status. UART stdio is disabled (see CMakeLists.txt) to keep a second interrupt-driven driver off the board while the time-critical HSTX DMA IRQ is running.
 
 ```text
 ==================================================
   Space Invader PICO  v1.0.0
 ==================================================
 [DEBUG] Microcontroller: RP2350 (Cortex-M33)
-[DEBUG] Core Voltage   : 1.20V
+[DEBUG] Core Voltage   : 1.10V
 [DEBUG] System Clock   : 126000000 Hz (Requested: 126000 kHz)
 [DEBUG] --- HSTX HDMI Pinout Configuration ---
 [DEBUG] HSTX Pins       : GPIO 12 - 19 (RP2350 Hardware HSTX)
