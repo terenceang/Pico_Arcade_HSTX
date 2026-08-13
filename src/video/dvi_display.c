@@ -20,17 +20,19 @@ static uint16_t palette_rgb565[256];
 
 static void __scratch_x("") dvi_scanline_cb(uint32_t v_scanline, uint32_t active_line, uint32_t *dst) {
     (void)v_scanline;
-    if (!display_fb || active_line >= FRAME_HEIGHT) {
-        for (int i = 0; i < FRAME_WIDTH / 2; ++i) {
+    // Map 480 active lines to 240 framebuffer lines (2x vertical line doubling)
+    uint32_t src_y = active_line >> 1;
+    if (!display_fb || src_y >= FRAME_HEIGHT) {
+        for (int i = 0; i < FRAME_WIDTH; ++i) {
             dst[i] = 0;
         }
         return;
     }
-    const uint8_t *src = &display_fb[active_line * FRAME_WIDTH];
-    for (int i = 0; i < FRAME_WIDTH; i += 2) {
-        uint16_t c0 = palette_rgb565[src[i]];
-        uint16_t c1 = palette_rgb565[src[i + 1]];
-        dst[i / 2] = (uint32_t)c0 | ((uint32_t)c1 << 16);
+    const uint8_t *src = &display_fb[src_y * FRAME_WIDTH];
+    // 2x horizontal pixel doubling: each 8-bit palettized pixel is expanded to two 16-bit RGB565 pixels
+    for (int i = 0; i < FRAME_WIDTH; ++i) {
+        uint32_t color = palette_rgb565[src[i]];
+        dst[i] = color | (color << 16);
     }
 }
 
