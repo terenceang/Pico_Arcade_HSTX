@@ -10,6 +10,7 @@
 
 #include "pico_hdmi/video_output.h"
 #include "pico_hdmi/hstx_data_island_queue.h"
+#include "pico_hdmi/hstx_pins.h"
 
 #define VREG_VSEL       VREG_VOLTAGE_1_20
 #define DVI_SYS_CLK_KHZ 126000
@@ -53,8 +54,23 @@ void dvi_display_set_buffer(uint8_t *buffer) {
 void dvi_display_init(void) {
     uint32_t actual_clk = clock_get_hz(clk_sys);
     printf("[DEBUG] System Clock   : %lu Hz (Requested: %u kHz)\n", actual_clk, DVI_SYS_CLK_KHZ);
-    printf("[DEBUG] --- HSTX HDMI Pinout Configuration ---\n");
-    printf("[DEBUG] HSTX Pins       : GPIO 12 - 19 (RP2350 Hardware HSTX)\n");
+    printf("[DEBUG] --- HSTX HDMI Pinout Configuration (User Specific Wiring) ---\n");
+    printf("[DEBUG] D0: 12(P)/13(N), CK: 14(P)/15(N), D2: 16(P)/17(N), D1: 18(P)/19(N)\n");
+
+    // Exact User Specified Wiring Pinout:
+    // GP12 to D0+, GP13 to D0-
+    // GP14 to CK+, GP15 to CK-
+    // GP16 to D2+, GP17 to D2-
+    // GP18 to D1+, GP19 to D1-
+    static const pico_hdmi_hstx_pinout_t user_pinout = {
+        .clock = { .positive_gpio = 14, .negative_gpio = 15 },
+        .data = {
+            [0] = { .positive_gpio = 12, .negative_gpio = 13 }, // D0+ on GP12, D0- on GP13
+            [1] = { .positive_gpio = 18, .negative_gpio = 19 }, // D1+ on GP18, D1- on GP19
+            [2] = { .positive_gpio = 16, .negative_gpio = 17 }  // D2+ on GP16, D2- on GP17
+        }
+    };
+    video_output_set_hstx_pinout(&user_pinout);
 
     dvi_display_set_palette(COLOR_BLACK,   0x000000);
     dvi_display_set_palette(COLOR_WHITE,   0xFFFFFF);
@@ -67,6 +83,7 @@ void dvi_display_init(void) {
 
     hstx_di_queue_init();
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
+    video_output_set_dvi_mode(true);
     pico_hdmi_set_audio_sample_rate(32000);
     video_output_set_scanline_callback(dvi_scanline_cb);
 
@@ -74,7 +91,5 @@ void dvi_display_init(void) {
 }
 
 void core1_main(void) {
-    while (true) {
-        tight_loop_contents();
-    }
+    video_output_core1_run();
 }

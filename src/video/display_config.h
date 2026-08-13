@@ -15,10 +15,10 @@
 // pattern (testcard.c). Set to 0 to show permanently, or N > 0 to show for N
 // seconds before handing off to the game. Set DEBUG_TESTCARD 0 to disable.
 #ifndef DEBUG_TESTCARD
-#define DEBUG_TESTCARD 0
+#define DEBUG_TESTCARD 1
 #endif
 #ifndef DEBUG_TESTCARD_SECONDS
-#define DEBUG_TESTCARD_SECONDS 5
+#define DEBUG_TESTCARD_SECONDS 0
 #endif
 
 // Debug controller test card: shows a live SNES-controller button diagram

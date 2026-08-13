@@ -14,14 +14,14 @@
 
 The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and **DMA channels** to drive TMDS differential pairs directly over GPIO pins. On the Raspberry Pi Pico 2, standard Pico DVI sock adapters route TMDS signals to **GPIO 12-19**.
 
-### Raspberry Pi Pico 2 DVI / HSTX Pinout Table
+### Custom Board DVI / HSTX Pinout Table
 
 | Signal Channel | Positive Pin (+) | Negative Pin (-) | Description |
 | :--- | :--- | :--- | :--- |
-| **Clock (CLK)** | **GPIO 12** | **GPIO 13** | TMDS Clock Differential Pair |
-| **Data 0 (Blue / Sync)** | **GPIO 14** | **GPIO 15** | TMDS Data Lane 0 (Blue + HSYNC/VSYNC) |
-| **Data 1 (Green)** | **GPIO 16** | **GPIO 17** | TMDS Data Lane 1 (Green) |
-| **Data 2 (Red)** | **GPIO 18** | **GPIO 19** | TMDS Data Lane 2 (Red) |
+| **Data 0 (Blue / Sync)** | **GPIO 12** | **GPIO 13** | TMDS Data Lane 0 (GP12 / GP13) |
+| **Clock (CLK)** | **GPIO 14** | **GPIO 15** | TMDS Clock Pair (GP14 / GP15) |
+| **Data 2 (Red)** | **GPIO 16** | **GPIO 17** | TMDS Data Lane 2 (GP16 / GP17) |
+| **Data 1 (Green)** | **GPIO 18** | **GPIO 19** | TMDS Data Lane 1 (GP18 / GP19) |
 
 > [!NOTE]
 > Differential pairs occupy 2 consecutive GPIO pins ($N$ and $N+1$). For example, setting `.pins_clk = 12` configures GPIO 12 as positive and GPIO 13 as negative.
@@ -34,11 +34,11 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 
 | Signal | GPIO | 40-pin header position | Description |
 | :--- | :--- | :--- | :--- |
-| **LATCH** | **GPIO 14** | Physical pin 8 | Latch pulse output (12 µs pulse) |
-| **CLOCK** | **GPIO 15** | Physical pin 10 | Shift clock output (500 kHz) |
-| **DATA** | **GPIO 16** | Physical pin 36 | Serial data input (internal pull-up enabled) |
-| **VCC** | **3.3V / 5V** | Physical pin 1 or 2 | Controller power supply |
-| **GND** | **GND** | Physical pin 6, 9, 14, 20, or 34 | Common ground |
+| **LATCH** | **GPIO 2** | Physical pin 4 | Latch pulse output (12 µs pulse) |
+| **CLOCK** | **GPIO 3** | Physical pin 5 | Shift clock output (500 kHz) |
+| **DATA** | **GPIO 4** | Physical pin 6 | Serial data input (internal pull-up enabled) |
+| **VCC** | **3.3V / 5V** | Physical pin 36 or 39 | Controller power supply |
+| **GND** | **GND** | Physical pin 3, 8, 13, 18, 23, 28, 33, or 38 | Common ground |
 
 ---
 

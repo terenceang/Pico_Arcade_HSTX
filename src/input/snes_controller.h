@@ -5,16 +5,17 @@
 #include <stdbool.h>
 
 // Default GPIO Pin configuration for SNES controller on Raspberry Pi Pico 2
+// Note: GPIO 12-19 are strictly reserved for HSTX DVI output!
 #ifndef SNES_PIN_LATCH
-#define SNES_PIN_LATCH 14 // Physical Header Pin 8
+#define SNES_PIN_LATCH 2 // Physical Header Pin 4
 #endif
 
 #ifndef SNES_PIN_CLOCK
-#define SNES_PIN_CLOCK 15 // Physical Header Pin 10
+#define SNES_PIN_CLOCK 3 // Physical Header Pin 5
 #endif
 
 #ifndef SNES_PIN_DATA
-#define SNES_PIN_DATA 16 // Physical Header Pin 36
+#define SNES_PIN_DATA 4 // Physical Header Pin 6
 #endif
 
 // SNES Controller Button Bitmasks (Active HIGH when pressed)
