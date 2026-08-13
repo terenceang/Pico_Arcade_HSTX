@@ -49,9 +49,7 @@ int main() {
 #endif
 
     printf("[DEBUG] Pre-filling audio Data Island queue...\n");
-    for (int i = 0; i < 4; ++i) {
-        audio_i2s_step_frame();
-    }
+    audio_i2s_feed_queue(200);
 
     dvi_display_set_buffer(fb);
 
@@ -73,7 +71,7 @@ int main() {
 #endif
 
     while (true) {
-        audio_i2s_step_frame();
+        audio_i2s_feed_queue(200);
         ++chunks_pushed;
 
 #if DEBUG_TESTCARD
@@ -92,6 +90,12 @@ int main() {
         }
 #endif
         for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
+            if ((y & 63) == 0) {
+                // Keep the HDMI audio queue continuously topped up across
+                // the frame instead of front-loading it once per frame -
+                // matches pico_hdmi's own bouncing_box reference example.
+                audio_i2s_feed_queue(200);
+            }
             uint8_t *dst = fb + y * FRAME_WIDTH;
 #if DEBUG_TESTCARD
             if (show_testcard) {
@@ -105,6 +109,11 @@ int main() {
             game_render_scanline(dst, y, frame_count);
 #endif
         }
+
+        // Convert the freshly-rendered 8bpp frame to pre-packed RGB565 on
+        // Core 0 (ample time budget) - Core 1's ISR then just returns a
+        // pointer, with no per-pixel palette lookups on that critical path.
+        dvi_display_convert_frame();
 
         sleep_until(delayed_by_us(start, chunks_pushed * CHUNK_US));
 

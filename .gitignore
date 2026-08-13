@@ -1,4 +1,5 @@
 build
+build_bouncing_box
 !.vscode/*
 
 # Space Invaders arcade ROM dump (Taito/Midway, 1978) - copyrighted, not

@@ -61,56 +61,64 @@ static int16_t debug_tone_lut[DEBUG_TONE_LUT_LEN];
 static audio_voice_t debug_voice;
 #endif
 
-void audio_i2s_step_frame(void) {
-    static int16_t frame_buf[AUDIO_FRAMES_PER_VIDEO_FRAME * 2];
+static void mix_one_sample(int16_t *out_mono) {
+    int32_t mix = 0;
 
-    for (uint32_t i = 0; i < AUDIO_FRAMES_PER_VIDEO_FRAME; ++i) {
-        int32_t mix = 0;
-
-        if (loop_voice.active) {
-            mix += voice_advance(&loop_voice, true);
-        }
-
-#if DEBUG_AUDIO_TEST_TONE
-        if (debug_voice.active) {
-            mix += debug_voice.data[debug_voice.pos];
-            if (++debug_voice.pos >= debug_voice.len)
-                debug_voice.pos = 0;
-        }
-#endif
-
-        for (unsigned v = 0; v < AUDIO_MAX_VOICES; ++v) {
-            if (!voices[v].active)
-                continue;
-            mix += voice_advance(&voices[v], false);
-        }
-
-        if (mix > INT16_MAX)
-            mix = INT16_MAX;
-        else if (mix < INT16_MIN)
-            mix = INT16_MIN;
-
-        int16_t sample16 = (int16_t)mix;
-        frame_buf[i * 2 + 0] = sample16;
-        frame_buf[i * 2 + 1] = sample16;
+    if (loop_voice.active) {
+        mix += voice_advance(&loop_voice, true);
     }
 
-    audio_sample_t samples[4];
-    uint32_t total_samples = AUDIO_FRAMES_PER_VIDEO_FRAME;
-    for (uint32_t i = 0; i < total_samples; i += 4) {
-        int count = (total_samples - i >= 4) ? 4 : (int)(total_samples - i);
-        for (int c = 0; c < count; c++) {
-            samples[c].left = frame_buf[(i + c) * 2];
-            samples[c].right = frame_buf[(i + c) * 2 + 1];
+#if DEBUG_AUDIO_TEST_TONE
+    if (debug_voice.active) {
+        mix += debug_voice.data[debug_voice.pos];
+        if (++debug_voice.pos >= debug_voice.len)
+            debug_voice.pos = 0;
+    }
+#endif
+
+    for (unsigned v = 0; v < AUDIO_MAX_VOICES; ++v) {
+        if (!voices[v].active)
+            continue;
+        mix += voice_advance(&voices[v], false);
+    }
+
+    if (mix > INT16_MAX)
+        mix = INT16_MAX;
+    else if (mix < INT16_MIN)
+        mix = INT16_MIN;
+
+    *out_mono = (int16_t)mix;
+}
+
+// Mixes and pushes 4-sample Data Island packets until the HDMI audio queue
+// reaches target_level, instead of generating a whole video frame's worth
+// in one burst - mirrors pico_hdmi's own bouncing_box reference example,
+// which keeps the queue continuously topped up rather than front-loading
+// it once per frame. Call this often (e.g. periodically while rendering a
+// frame's scanlines), not just once per frame.
+void audio_i2s_feed_queue(uint32_t target_level) {
+    while (hstx_di_queue_get_level() < target_level) {
+        audio_sample_t samples[4];
+        for (int c = 0; c < 4; c++) {
+            int16_t sample16;
+            mix_one_sample(&sample16);
+            samples[c].left = sample16;
+            samples[c].right = sample16;
         }
         hstx_packet_t packet;
+        // Matches pico_hdmi's own bouncing_box reference example exactly
+        // (explicit IEC 60958 channel status, sample-rate-aware).
         audio_frame_counter = hstx_packet_set_audio_samples_cs_rate(
-            &packet, samples, count, audio_frame_counter, AUDIO_SAMPLE_RATE
+            &packet, samples, 4, audio_frame_counter, AUDIO_SAMPLE_RATE
         );
         hstx_data_island_t island;
         hstx_encode_data_island(&island, &packet, false, DI_HSYNC_ACTIVE);
         hstx_di_queue_push(&island);
     }
+}
+
+void audio_i2s_step_frame(void) {
+    audio_i2s_feed_queue(200);
 }
 
 void audio_i2s_set_mute(bool mute) {

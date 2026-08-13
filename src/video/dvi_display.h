@@ -12,6 +12,13 @@ void dvi_display_init(void);
 // Sets the framebuffer pointer for scanline rendering.
 void dvi_display_set_buffer(uint8_t *buffer);
 
+// Converts the current 8bpp framebuffer (set via dvi_display_set_buffer) to
+// pre-packed RGB565 scanlines Core 1's ISR can return directly with no
+// per-pixel work. Call once per frame from Core 0, after rendering the
+// frame's content into the framebuffer and before the next scanline sweep
+// needs it.
+void dvi_display_convert_frame(void);
+
 // Sets palette RGB888 color for 8bpp index.
 void dvi_display_set_palette(uint8_t index, uint32_t rgb888);
 

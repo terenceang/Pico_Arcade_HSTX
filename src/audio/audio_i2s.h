@@ -2,6 +2,7 @@
 #define AUDIO_I2S_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "display_config.h"
 #include "sound_data.h"
@@ -26,7 +27,15 @@ void audio_i2s_init(void);
 
 // Steps the software audio mixer per frame (AUDIO_FRAMES_PER_VIDEO_FRAME
 // samples) and pushes the audio Data Island packets to the HSTX queue.
+// Equivalent to audio_i2s_feed_queue(200) - kept for callers that only need
+// a once-per-frame top-up.
 void audio_i2s_step_frame(void);
+
+// Mixes and pushes 4-sample Data Island packets until the HDMI audio queue
+// reaches target_level. Call this periodically (not just once per frame) so
+// the queue stays continuously topped up rather than front-loaded in one
+// burst - see audio_i2s.c.
+void audio_i2s_feed_queue(uint32_t target_level);
 
 // No physical amp/DAC in this design - always a no-op. Kept so
 // sound_effects.c's port 3 bit 5 (AMP-enable) wiring has somewhere to write

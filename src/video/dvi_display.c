@@ -12,26 +12,48 @@
 #include "pico_hdmi/hstx_data_island_queue.h"
 #include "pico_hdmi/hstx_pins.h"
 
-#define VREG_VSEL       VREG_VOLTAGE_1_20
+// RP2350 power-on default (VREG_VOLTAGE_DEFAULT) - matches lib/pico_hdmi's
+// own 480p reference example (examples/bouncing_box), which never raises
+// voltage for this mode. This project previously ran at 1.20V for no
+// documented reason; higher voltage means faster edges, which can mean more
+// ringing/overshoot on marginal wiring rather than better margin - testing
+// parity with the proven reference config.
+#define VREG_VSEL       VREG_VOLTAGE_1_10
 #define DVI_SYS_CLK_KHZ 126000
 
 static uint8_t *display_fb = NULL;
 static uint16_t palette_rgb565[256];
 
-static void __scratch_x("") dvi_scanline_cb(uint32_t v_scanline, uint32_t active_line, uint32_t *dst) {
-    (void)v_scanline;
-    if (!display_fb || active_line >= FRAME_HEIGHT) {
-        for (int i = 0; i < FRAME_WIDTH / 2; ++i) {
-            dst[i] = 0;
-        }
+// Pre-converted RGB565 lines, one per logical framebuffer row, each holding
+// MODE_H_ACTIVE_PIXELS/2 = 320 packed words (640 physical pixels, already
+// 2x horizontally doubled). Filled by dvi_display_convert_frame() on Core 0
+// (ample time budget) once per frame; Core 1's ISR then just returns a
+// pointer into this - no per-pixel palette lookups on the time-critical
+// path. See display_config.h's FRAME_WIDTH/HEIGHT comment: a native 640-wide
+// framebuffer with per-pixel lookups *in the ISR* blew HDMI mode's per-line
+// budget (confirmed by swapping in a zero-cost callback, which was rock
+// solid) - this pointer-callback design is pico_hdmi's own intended fix for
+// that class of problem, per video_output.h's scanline-pointer-callback docs.
+static uint32_t rgb565_lines[FRAME_HEIGHT][FRAME_WIDTH];
+
+void dvi_display_convert_frame(void) {
+    if (!display_fb)
         return;
+    for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
+        const uint8_t *src = &display_fb[y * FRAME_WIDTH];
+        uint32_t *dst = rgb565_lines[y];
+        for (unsigned i = 0; i < FRAME_WIDTH; ++i) {
+            uint32_t color = palette_rgb565[src[i]];
+            dst[i] = color | (color << 16);
+        }
     }
-    const uint8_t *src = &display_fb[active_line * FRAME_WIDTH];
-    for (int i = 0; i < FRAME_WIDTH; i += 2) {
-        uint16_t c0 = palette_rgb565[src[i]];
-        uint16_t c1 = palette_rgb565[src[i + 1]];
-        dst[i / 2] = (uint32_t)c0 | ((uint32_t)c1 << 16);
-    }
+}
+
+// active_line ranges 0..MODE_V_ACTIVE_LINES-1 (0..479); >>1 always lands in
+// 0..FRAME_HEIGHT-1 (0..239), so no bounds check is needed.
+static const uint32_t *__scratch_x("") dvi_scanline_ptr_cb(uint32_t v_scanline, uint32_t active_line) {
+    (void)v_scanline;
+    return rgb565_lines[active_line >> 1];
 }
 
 void dvi_display_clock_init(void) {
@@ -83,9 +105,9 @@ void dvi_display_init(void) {
 
     hstx_di_queue_init();
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
-    video_output_set_dvi_mode(true); // TEMP: DVI-only baseline test - revert to false for HDMI audio
+    video_output_set_dvi_mode(false); // HDMI mode: Data Islands + audio enabled
     pico_hdmi_set_audio_sample_rate(48000);
-    video_output_set_scanline_callback(dvi_scanline_cb);
+    video_output_set_scanline_pointer_callback(dvi_scanline_ptr_cb);
 
     printf("[DEBUG] pico_hdmi HSTX driver initialized successfully.\n");
 }
