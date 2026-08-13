@@ -5,9 +5,11 @@
 #include <stdint.h>
 
 // Sample rate every embedded sound is expected to already be at - see
-// sounds/README.md. audio_i2s.c mixes at this rate with no resampling, so a
-// file recorded/converted at any other rate plays back at the wrong
-// pitch/speed.
+// sounds/README.md. audio_i2s.c resamples from this rate to AUDIO_SAMPLE_RATE
+// (audio_i2s.h) at mix time (nearest-sample, see voice_advance() in
+// audio_i2s.c), so a file recorded/converted at any other rate still just
+// plays back at the wrong pitch/speed - the two rates no longer have to
+// match, but the file's actual rate has to match this constant.
 #define SOUND_SAMPLE_RATE_HZ 32000
 
 typedef struct {

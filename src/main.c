@@ -48,10 +48,16 @@ int main() {
     printf("[DEBUG] DEBUG_AUDIO_TEST_TONE enabled: playing continuous test tone.\n");
 #endif
 
+    printf("[DEBUG] Pre-filling audio Data Island queue...\n");
+    for (int i = 0; i < 4; ++i) {
+        audio_i2s_step_frame();
+    }
+
     dvi_display_set_buffer(fb);
 
     printf("[DEBUG] Launching Core 1...\n");
     multicore_launch_core1(core1_main);
+    sleep_ms(100);
     printf("[DEBUG] Core 1 launched.\n");
 
     printf("\n[STATUS] Rendering HSTX HDMI 640x480 @ 60Hz (320x240 8bpp palettized + HDMI Audio)...\n");

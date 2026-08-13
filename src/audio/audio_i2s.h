@@ -17,7 +17,7 @@
 // the real cabinet's sounds came from discrete analog circuitry, not
 // samples.
 
-#define AUDIO_SAMPLE_RATE 32000
+#define AUDIO_SAMPLE_RATE 48000
 #define AUDIO_FRAMES_PER_VIDEO_FRAME (AUDIO_SAMPLE_RATE / DISPLAY_REFRESH_HZ)
 
 // Resets the software mixer's voice state. Call once, before the main

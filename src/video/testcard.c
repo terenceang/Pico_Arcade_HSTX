@@ -63,12 +63,21 @@ void testcard_init(void) {
     generate_bottom_section(scanline_bottom, FRAME_WIDTH);
 }
 
+// Row thresholds as fractions of FRAME_HEIGHT (originally tuned as literal
+// row numbers 160/180/225/235 for a 240-line framebuffer - kept
+// proportional so the pattern still fills the whole screen at other
+// framebuffer heights, e.g. this project's native 480-line mode).
+#define TESTCARD_TOP_BARS_END   (FRAME_HEIGHT * 160 / 240)
+#define TESTCARD_MID_BARS_END   (FRAME_HEIGHT * 180 / 240)
+#define TESTCARD_SYNC_BAR_START (FRAME_HEIGHT * 225 / 240)
+#define TESTCARD_SYNC_BAR_END   (FRAME_HEIGHT * 235 / 240)
+
 void testcard_render_scanline(uint8_t *dst, unsigned y, unsigned frame_count) {
-    if (y < 160) {
+    if (y < TESTCARD_TOP_BARS_END) {
         memcpy(dst, scanline_bars, FRAME_WIDTH);
-    } else if (y < 180) {
+    } else if (y < TESTCARD_MID_BARS_END) {
         memcpy(dst, scanline_mid, FRAME_WIDTH);
-    } else if (y >= 225 && y < 235) {
+    } else if (y >= TESTCARD_SYNC_BAR_START && y < TESTCARD_SYNC_BAR_END) {
         unsigned anim_pos = frame_count % (FRAME_WIDTH - 20);
         memcpy(scanline_anim, scanline_bottom, sizeof(scanline_anim));
         for (unsigned x = anim_pos; x < anim_pos + 20; ++x) {

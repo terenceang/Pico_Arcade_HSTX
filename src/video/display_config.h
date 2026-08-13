@@ -1,15 +1,11 @@
 #ifndef DISPLAY_CONFIG_H
 #define DISPLAY_CONFIG_H
 
-#ifndef VIDEO_MODE_320x240
-#define VIDEO_MODE_320x240
-#endif
-
 #include "pico_hdmi/video_output.h"
 
-// Framebuffer resolution (320x240 8bpp palettized)
-#define FRAME_WIDTH  320
-#define FRAME_HEIGHT 240
+// Framebuffer resolution (640x480 8bpp palettized)
+#define FRAME_WIDTH  640
+#define FRAME_HEIGHT 480
 
 // Fixed by the DVI timing this project always runs (640x480p60 - see
 // Video.md). Used to convert seconds into frame counts.
@@ -38,7 +34,7 @@
 
 // Debug audio test tone: set to 1 to play test tone during test card, 0 to disable.
 #ifndef DEBUG_AUDIO_TEST_TONE
-#define DEBUG_AUDIO_TEST_TONE 0
+#define DEBUG_AUDIO_TEST_TONE 1
 #endif
 
 // Screen orientation, to match however the physical display is actually

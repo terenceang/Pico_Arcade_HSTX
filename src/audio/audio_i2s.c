@@ -20,6 +20,7 @@ typedef struct {
     const int16_t *data;
     uint32_t pos;
     uint32_t len;
+    uint32_t frac; // resampling accumulator - see voice_advance()
     bool active;
 } audio_voice_t;
 
@@ -28,8 +29,34 @@ static unsigned voice_steal_next;
 static audio_voice_t loop_voice;
 static int audio_frame_counter = 0;
 
+// sound_table[] PCM is authored at SOUND_SAMPLE_RATE_HZ (see sound_data.h),
+// but the mixer must output at AUDIO_SAMPLE_RATE (fixed by the HDMI audio
+// pacing/ACR math - see dvi_display.c). A Bresenham-style accumulator steps
+// the source position at SOUND_SAMPLE_RATE_HZ/AUDIO_SAMPLE_RATE per output
+// sample; the accumulator itself stays bounded by AUDIO_SAMPLE_RATE
+// regardless of how long the sound is, unlike a fixed-point position would
+// be. Nearest-sample only (no interpolation) - acceptable for short 8-bit-
+// era arcade effects.
+static inline int16_t voice_advance(audio_voice_t *v, bool loop) {
+    int16_t sample = v->data[v->pos];
+    v->frac += SOUND_SAMPLE_RATE_HZ;
+    while (v->frac >= AUDIO_SAMPLE_RATE) {
+        v->frac -= AUDIO_SAMPLE_RATE;
+        if (++v->pos >= v->len) {
+            if (loop) {
+                v->pos = 0;
+            } else {
+                v->active = false;
+                v->pos = v->len - 1;
+                break;
+            }
+        }
+    }
+    return sample;
+}
+
 #if DEBUG_AUDIO_TEST_TONE
-#define DEBUG_TONE_LUT_LEN 32 // 32,000 Hz / 32 = 1,000 Hz (1 kHz tone)
+#define DEBUG_TONE_LUT_LEN 48 // AUDIO_SAMPLE_RATE (48,000 Hz) / 48 = 1,000 Hz (1 kHz tone)
 static int16_t debug_tone_lut[DEBUG_TONE_LUT_LEN];
 static audio_voice_t debug_voice;
 #endif
@@ -41,9 +68,7 @@ void audio_i2s_step_frame(void) {
         int32_t mix = 0;
 
         if (loop_voice.active) {
-            mix += loop_voice.data[loop_voice.pos];
-            if (++loop_voice.pos >= loop_voice.len)
-                loop_voice.pos = 0;
+            mix += voice_advance(&loop_voice, true);
         }
 
 #if DEBUG_AUDIO_TEST_TONE
@@ -57,9 +82,7 @@ void audio_i2s_step_frame(void) {
         for (unsigned v = 0; v < AUDIO_MAX_VOICES; ++v) {
             if (!voices[v].active)
                 continue;
-            mix += voices[v].data[voices[v].pos];
-            if (++voices[v].pos >= voices[v].len)
-                voices[v].active = false;
+            mix += voice_advance(&voices[v], false);
         }
 
         if (mix > INT16_MAX)
@@ -85,7 +108,7 @@ void audio_i2s_step_frame(void) {
             &packet, samples, count, audio_frame_counter, AUDIO_SAMPLE_RATE
         );
         hstx_data_island_t island;
-        hstx_encode_data_island(&island, &packet, false, true);
+        hstx_encode_data_island(&island, &packet, false, DI_HSYNC_ACTIVE);
         hstx_di_queue_push(&island);
     }
 }
@@ -137,6 +160,7 @@ void audio_i2s_play_sound(sound_id_t sound_id) {
     voices[slot].data = s->samples;
     voices[slot].len = s->frame_count;
     voices[slot].pos = 0;
+    voices[slot].frac = 0;
     voices[slot].active = true;
 
     restore_interrupts(save);
@@ -158,6 +182,7 @@ void audio_i2s_set_sound_loop(sound_id_t sound_id, bool active) {
             loop_voice.data = s->samples;
             loop_voice.len = s->frame_count;
             loop_voice.pos = 0;
+            loop_voice.frac = 0;
             loop_voice.active = true;
         }
     }
