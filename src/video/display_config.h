@@ -22,7 +22,7 @@
 // pattern (testcard.c). Set to 0 to show permanently, or N > 0 to show for N
 // seconds before handing off to the game. Set DEBUG_TESTCARD 0 to disable.
 #ifndef DEBUG_TESTCARD
-#define DEBUG_TESTCARD 1
+#define DEBUG_TESTCARD 0
 #endif
 #ifndef DEBUG_TESTCARD_SECONDS
 #define DEBUG_TESTCARD_SECONDS 0
@@ -41,7 +41,7 @@
 
 // Debug audio test tone: set to 1 to play test tone during test card, 0 to disable.
 #ifndef DEBUG_AUDIO_TEST_TONE
-#define DEBUG_AUDIO_TEST_TONE 1
+#define DEBUG_AUDIO_TEST_TONE 0
 #endif
 
 // Screen orientation, to match however the physical display is actually

@@ -15,4 +15,5 @@ roms/*
 sounds/*
 !sounds/README.md
 
-
+# Ignore zip archives (e.g. ROM archives)
+*.zip
