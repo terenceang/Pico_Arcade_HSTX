@@ -54,6 +54,7 @@ int main() {
            DISPLAY_REFRESH_HZ, FRAME_WIDTH, FRAME_HEIGHT);
 
     uint32_t frame_count = 0;
+    uint32_t last_hdmi_resync_count = dvi_display_get_hdmi_resync_count();
     absolute_time_t start = get_absolute_time();
 
 #if DEBUG_TESTCARD
@@ -123,6 +124,18 @@ int main() {
         while (!time_reached(deadline)) {
             audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
             sleep_us(250);
+        }
+
+        // Surface the Core 1 HDMI sync-loss watchdog's recoveries (see
+        // dvi_display.c's hdmi_sync_watchdog_task()) on the serial console -
+        // cheap to check (a plain counter compare) once per frame, only
+        // prints on an actual event so it doesn't spam the log.
+        uint32_t hdmi_resync_count = dvi_display_get_hdmi_resync_count();
+        if (hdmi_resync_count != last_hdmi_resync_count) {
+            printf("[WARN] HDMI sync-loss watchdog force-resynced the HSTX output (total: %lu) - see "
+                   "CLAUDE.md's \"HSTX sync-loss caveat\"\n",
+                   (unsigned long)hdmi_resync_count);
+            last_hdmi_resync_count = hdmi_resync_count;
         }
 
         ++frame_count;

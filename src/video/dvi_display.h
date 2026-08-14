@@ -25,4 +25,10 @@ void dvi_display_set_palette(uint8_t index, uint32_t rgb888);
 // Core 1 entry point: idle worker for HSTX background tasks.
 void core1_main(void);
 
+// Number of times the HDMI sync-loss watchdog has force-resynced the HSTX
+// output (see dvi_display.c's hdmi_sync_watchdog_task()) since boot. Poll
+// this from Core 0 to log/notice recoveries - see CLAUDE.md's "HSTX
+// sync-loss caveat".
+uint32_t dvi_display_get_hdmi_resync_count(void);
+
 #endif // DVI_DISPLAY_H

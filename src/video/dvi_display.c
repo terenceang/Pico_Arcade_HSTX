@@ -127,6 +127,74 @@ void dvi_display_init(void) {
     printf("[DEBUG] pico_hdmi HSTX driver initialized successfully.\n");
 }
 
+// ============================================================================
+// HDMI sync-loss watchdog
+// ============================================================================
+//
+// pico_hdmi's own video_output_force_resync() doc comment (video_output.c)
+// describes a failure mode this project has independently reproduced: a
+// single corrupted/mis-sized HSTX command word desyncs the TMDS expander
+// permanently - the sink loses lock while scanlines "complete" at bus speed
+// because the FIFO no longer back-pressures the DMA engine. That symptom
+// (video_frame_count advancing far faster than the real 60Hz refresh, never
+// recovering on its own) matches this project's "HDMI sync-loss" bug
+// exactly - see CLAUDE.md's "HSTX sync-loss caveat" for the investigation
+// history. pico_hdmi ships video_output_force_resync() as the recovery
+// path, but nothing was ever calling it - once desynced, this project just
+// stayed desynced forever.
+//
+// This watchdog runs as pico_hdmi's Core 1 background task (registered
+// below), self-contained on Core 1: it compares video_frame_count's actual
+// advance against wall-clock time every ~0.5s and force-resyncs if it's
+// running far faster than the real refresh rate should allow. It does NOT
+// fix why the desync happens in the first place (still unknown) - it only
+// makes the symptom transient/self-healing instead of permanent.
+// video_output_force_resync() is documented as safe to call from Core 1
+// thread context specifically (it touches Core 1-owned DMA/HSTX state) -
+// do not move this check to Core 0.
+#define HDMI_WATCHDOG_CHECK_US 500000 // check every ~0.5s
+// Desync runs at ~137.8Hz (~2.3x nominal 60Hz - see CLAUDE.md). Trigger well
+// above ordinary jitter but well below that rate: 1.5x the expected count
+// for the elapsed window, plus a small flat margin for short windows.
+#define HDMI_WATCHDOG_RATIO_NUM 3
+#define HDMI_WATCHDOG_RATIO_DEN 2
+#define HDMI_WATCHDOG_SLACK_FRAMES 5
+
+static void hdmi_sync_watchdog_task(void) {
+    static absolute_time_t s_last_check;
+    static uint32_t s_last_vfc;
+    static bool s_started = false;
+
+    if (!s_started) {
+        s_last_check = get_absolute_time();
+        s_last_vfc = video_frame_count;
+        s_started = true;
+        return;
+    }
+
+    int64_t elapsed_us = absolute_time_diff_us(s_last_check, get_absolute_time());
+    if (elapsed_us < HDMI_WATCHDOG_CHECK_US)
+        return;
+
+    uint32_t vfc = video_frame_count;
+    uint32_t delta = vfc - s_last_vfc;
+    s_last_check = get_absolute_time();
+    s_last_vfc = vfc;
+
+    uint32_t expected = (uint32_t)((elapsed_us * DISPLAY_REFRESH_HZ) / 1000000);
+    uint32_t threshold = (expected * HDMI_WATCHDOG_RATIO_NUM) / HDMI_WATCHDOG_RATIO_DEN + HDMI_WATCHDOG_SLACK_FRAMES;
+
+    if (delta > threshold) {
+        video_output_force_resync();
+        s_last_vfc = video_frame_count; // re-baseline post-resync
+    }
+}
+
+uint32_t dvi_display_get_hdmi_resync_count(void) {
+    return video_output_resync_count;
+}
+
 void core1_main(void) {
+    video_output_set_background_task(hdmi_sync_watchdog_task);
     video_output_core1_run();
 }

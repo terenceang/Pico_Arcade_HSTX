@@ -22,7 +22,7 @@ attract screen. See the Roadmap in `README.md` and the "HSTX sync-loss caveat" b
 see `roms/README.md`). Without it in `roms/`, the build substitutes a zero-filled
 placeholder so compilation still succeeds, but the firmware won't run the actual game.
 
-## HSTX sync-loss caveat (STATUS: unresolved, still open as of 2026-08-14)
+## HSTX sync-loss caveat (STATUS: root cause unconfirmed, auto-recovery mitigation added as of 2026-08-14)
 
 This project has reproduced a real hardware failure mode in the vendored HDMI HSTX/Data Island path:
 Core 0 stays alive and running, but after some period of normal operation, Core 1's scan clock snaps from
@@ -127,10 +127,57 @@ signal. This is a mitigation attempt, not a confirmed fix: whether the sync-loss
 real game (no test cards, no SNES code at all) has not yet been soak-tested on hardware as of this note.
 If you touch the audio queue, HSTX timing path, or Core 1's ISR - or reintroduce any input method - treat
 sustained HDMI sync-loss as a still-open bug and validate on hardware before claiming any related change
-fixes it. If the game still drops with SNES gone, the next things to try: Core 1's own ISR timing budget
-under sustained operation, whether the failure correlates with wall-clock uptime/frame count rather than any
-workload, and external factors (HDMI sink EDID re-negotiation, cable quality, thermal drift on the RP2350's
-clock/PLL).
+fixes it.
+
+**Confirmed narrowing #6 (soak test, real game, SNES controller code entirely removed from the project):**
+DOES reproduce. SNES removal did not fix the sync-loss - confirming it was never the (sole) root cause. This
+prompted actually reading `lib/pico_hdmi/src/video_output.c`'s DMA/ISR engine instead of continuing to
+toggle Core 0 subsystems on and off, since five tests had failed to isolate a Core-0-side culprit at all.
+
+**Likely mechanism found.** `video_output_force_resync()`'s own doc comment in that file describes a known
+pico_hdmi failure mode that matches this bug's symptom exactly: "a single corrupted/mis-sized [HSTX] command
+word makes the expander misinterpret everything after it, permanently - the sink loses lock while scanlines
+'complete' at bus speed because the FIFO no longer back-pressures [the DMA engine]." That "scanlines complete
+at bus speed" is what CLAUDE.md's original description ("Core 1's scan clock snaps from 60Hz to a fixed
+~137.8Hz and never recovers") was actually observing - not a literal clock change, but the DMA engine racing
+ahead unthrottled once the HSTX command stream desyncs, permanently, until something explicitly restarts it.
+The library ships exactly that recovery function - **but nothing in this project was ever calling it.**
+Once desynced, this project just stayed desynced forever, matching "never recovers" precisely.
+
+This also explains why five different, seemingly-contradictory Core-0-workload tests all pointed in
+different directions: `dma_irq_handler()` (`video_output.c`) runs on Core 1 at the highest IRQ priority, but
+it's still a plain CPU instruction stream sharing the same memory bus as Core 0 - and it synchronously calls
+our `scanline_pointer_callback()` *inside the ISR* to read `rgb565_lines[]`, which Core 0 concurrently writes
+in `dvi_display_convert_frame()`. If Core 0's bus traffic ever stalls that ISR at the wrong instant for long
+enough to corrupt a DMA-posted command word, this exact permanent desync could result - which would depend
+on rare timing coincidences rather than "what kind" of Core 0 work is running, exactly matching how
+inconsistent narrowings #1-#5 looked from the Core-0 side. This mechanism is a strong candidate, not
+confirmed with certainty - the actual trigger for the corrupted command word itself (a genuine race in
+`dma_irq_handler()`'s own state machine, bus-arbitration starvation, or something else in the HSTX/DMA
+setup) is still unknown.
+
+**Mitigation implemented (not a root-cause fix): an automatic recovery watchdog.** `dvi_display.c`'s
+`hdmi_sync_watchdog_task()` runs as pico_hdmi's Core 1 background task (registered via
+`video_output_set_background_task()` in `core1_main()`) - self-contained on Core 1, since
+`video_output_force_resync()` is documented safe to call from Core 1 thread context specifically (it
+manipulates Core-1-owned DMA/HSTX state; calling it from Core 0 would not actually mask Core 1's own NVIC
+and would race). It compares `video_frame_count`'s actual advance against wall-clock time every ~0.5s and
+calls `video_output_force_resync()` if the rate is far above nominal 60Hz (threshold tuned well above normal
+jitter, well below the ~137.8Hz/2.3x desync rate - see the constants in `dvi_display.c`). `main.c` logs a
+`[WARN]` line whenever `dvi_display_get_hdmi_resync_count()` increases, so recoveries are visible on the
+serial console. This turns a permanent, unrecoverable signal loss into a brief, self-healing glitch (at most
+~0.5-1s of visibly wrong output) instead - a real improvement even without knowing the root cause, but not
+a substitute for finding and fixing whatever actually corrupts the command stream. Validate on hardware:
+confirm the watchdog actually fires and recovers when the failure reproduces, and that it doesn't
+false-trigger during ordinary operation.
+
+If this mitigation turns out insufficient, or you want to pursue the actual root cause: instrument
+`dma_irq_handler()` itself (e.g., a cheap counter/timestamp at entry, checked from Core 0) to see whether its
+own execution time occasionally spikes right before a desync; consider whether `scanline_pointer_callback()`
+being called synchronously inside the highest-priority ISR is inherently fragile under Core 0 bus contention
+regardless of what Core 0 is doing; and whether the failure correlates with wall-clock uptime/frame count
+rather than any specific workload. The SNES controller subsystem remains removed (see the commit that added
+this note) since it's still one less variable, even though it's now confirmed not to have been the cause.
 
 ## Build
 
