@@ -50,6 +50,19 @@
 #define DEBUG_AUDIO_TEST_TONE 0
 #endif
 
+// Debug: skip polling the SNES controller every frame - the game still
+// runs completely normally (real ROM, real CPU emulation, real rendering),
+// it just always sees "no buttons pressed" (game_render_scanline() in
+// game.c never calls snes_controller_read()). Diagnostic only, for
+// isolating whether draining the SNES PIO RX FIFO is implicated in the
+// HDMI sync-loss bug (see CLAUDE.md's "HSTX sync-loss caveat") independent
+// of CPU emulation - snes_controller_init() itself still runs regardless
+// (from game_init()), only the per-frame read is skipped. Set to 0 for
+// normal play.
+#ifndef DEBUG_SKIP_CONTROLLER_POLL
+#define DEBUG_SKIP_CONTROLLER_POLL 0
+#endif
+
 // Screen orientation, to match however the physical display is actually
 // mounted - see Emulator.md's "Screen orientation" section. Neither of
 // these has any effect on the DVI engine's own fixed 640x480p60 output

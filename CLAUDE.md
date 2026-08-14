@@ -57,18 +57,44 @@ controller PIO polling, or `render_arcade_row()`'s per-pixel VRAM sampling in `g
 or triggering some workload-dependent DMA/IRQ interaction, that the test card's much lighter, static
 workload never hits.
 
-Next diagnostic step: enable `DEBUG_CONTROLLER_TESTCARD` instead (still no CPU emulation/interrupts, but
-*does* poll `snes_controller_read()` every frame like the game does) to check whether SNES PIO polling
-specifically is implicated, independent of CPU emulation. If that also survives indefinitely, the trigger
-narrows further to `i8080_step`/interrupt delivery/`render_arcade_row()` specifically - i.e., something
-about running the actual emulated CPU, not just polling input. Beyond that: Core 1's own ISR timing budget
-under sustained operation (does it only degrade after some duration, suggesting drift/leak rather than a
-one-shot overrun?), whether the failure correlates with wall-clock uptime or frame count once the game is
-running, and factors external to this codebase (HDMI sink behavior/EDID re-negotiation, cable quality,
-thermal effects on the RP2350's clock/PLL) remain possible but are now lower-priority than the game-path
-theory above. If you touch the audio queue, HSTX timing path, or Core 1's ISR, treat sustained HDMI
-sync-loss as a still-open bug and validate on hardware before claiming any related change fixes it - this
-exact mistake (declaring it fixed based on the audio-churn theory alone) is why this caveat documents a
+**Confirmed narrowing #2 (soak test, `DEBUG_CONTROLLER_TESTCARD 1` + `DEBUG_AUDIO_TEST_TONE 1`, still zero
+CPU emulation/interrupts):** DOES reproduce. This isolates the trigger further than expected: `game_init()`
+calls `snes_controller_init()` unconditionally on every build regardless of which debug mode is active, so
+PIO2's state machine was already configured identically in the test-card run above - the only actual
+runtime difference in this run is that `snes_controller_read()` gets *called* once per frame, which drains
+the PIO RX FIFO.
+
+`src/input/snes_controller.pio` is a free-running, autonomous program (no `.wrap_target`/`.wrap`, so it just
+loops forever): it pulses latch/clock and pushes a fresh 16-bit sample to the 4-word-deep RX FIFO roughly
+every 46us, with no gating on whether anyone is reading. Left undrained (the plain test-card run), the FIFO
+fills in ~4*46us =~ 184us after boot and the SM then permanently stalls on `push block` - it goes electrically
+silent on GPIO2-4 for the rest of the run, a one-time burst. Drained once per frame (this run, and the real
+game's normal input handling), each read empties the FIFO and lets the SM burst back into ~184us of activity
+before re-filling and stalling again - so instead of one brief burst at boot, GPIO2-4 gets a recurring ~184us
+burst of PIO activity once every ~16.67ms, indefinitely. That recurring bursty pattern - not CPU emulation,
+which still isn't running in this test - is the leading suspect now, and would also explain why the failure
+takes "a while" to appear: it plausibly needs many repeated bursts to hit whatever rare timing coincidence
+with Core 1's HSTX work is actually responsible (a shared bus/DMA-arbitration hazard between the PIO block
+and HSTX peripheral, or electrical noise coupling from the continuous ~1MHz-ish GPIO toggling into the HSTX
+differential output, are both plausible at the RP2350 silicon/board level - this is speculative and unverified,
+not confirmed).
+
+Next diagnostic step: run the real game (not a test card - `DEBUG_TESTCARD 0`, `DEBUG_CONTROLLER_TESTCARD 0`)
+with `snes_controller_read()` itself skipped (game always sees "no buttons pressed"), to isolate "PIO polling"
+from "CPU emulation" as independent variables - the two tests so far couldn't separate them, since the
+controller test card doesn't run the CPU either way. If the real game survives indefinitely with polling
+disabled, that's strong confirmation the SNES PIO path is the (or a) root cause, independent of CPU emulation,
+and points toward a real fix: redesign `snes_controller.pio` to gate its autonomous refill behind an explicit
+per-poll trigger (e.g. `irq wait`) instead of free-running continuously, or drop the recurring-burst pattern
+some other way (lower poll rate, restart the SM per read instead of leaving it free-running, or a plain
+GPIO bit-bang read instead of PIO). If it still drops with polling disabled, CPU emulation is independently
+also a sufficient trigger and the two would need to be investigated separately. Beyond that: Core 1's own ISR
+timing budget under sustained operation, whether the failure correlates with wall-clock uptime/frame count,
+and external factors (HDMI sink EDID re-negotiation, cable quality, thermal drift) remain possible but are
+now lower-priority than the PIO-polling theory above. If you touch the audio queue, HSTX timing path, the
+SNES PIO driver, or Core 1's ISR, treat sustained HDMI sync-loss as a still-open bug and validate on hardware
+before claiming any related change fixes it - this exact mistake (declaring it fixed based on the audio-churn
+theory alone) is why this caveat documents a
 superseded hypothesis instead of a closed issue.
 
 ## Build

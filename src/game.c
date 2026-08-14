@@ -246,7 +246,14 @@ void game_render_scanline(uint8_t *dst, unsigned y, unsigned frame_count) {
     (void)frame_count;
 
     if (y == 0) {
+#if DEBUG_SKIP_CONTROLLER_POLL
+        // Diagnostic: skip draining the SNES PIO RX FIFO entirely (see
+        // display_config.h) - the game proceeds as if no buttons are ever
+        // pressed, everything else runs normally.
+        uint16_t btns = 0;
+#else
         uint16_t btns = snes_controller_read();
+#endif
         invaders_machine_set_in1(&s_machine, SI_IN1_COIN,     (btns & SNES_BTN_SELECT) != 0);
         invaders_machine_set_in1(&s_machine, SI_IN1_P1_START, (btns & SNES_BTN_START)  != 0);
         invaders_machine_set_in1(&s_machine, SI_IN1_P1_LEFT,  (btns & SNES_BTN_LEFT)   != 0);
