@@ -61,9 +61,11 @@
 // 0's software-paced rate; spikes well above 60 during the HSTX sync-loss
 // bug - see CLAUDE.md's "HSTX sync-loss caveat"), updated live. Lets you
 // watch for the sync-loss symptom directly on the display, without needing
-// a serial connection. Set to 0 for normal play.
+// a serial connection. Left on by request while the HSTX sync-loss
+// investigation is ongoing (see DEBUG_AUDIO_TEST_TONE above, kept on for
+// the same reason) - set back to 0 once that investigation is closed out.
 #ifndef DEBUG_HDMI_STATUS_OVERLAY
-#define DEBUG_HDMI_STATUS_OVERLAY 0
+#define DEBUG_HDMI_STATUS_OVERLAY 1
 #endif
 
 // Screen orientation, to match however the physical display is actually
