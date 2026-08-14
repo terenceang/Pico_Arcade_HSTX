@@ -63,6 +63,20 @@
 #define DEBUG_SKIP_CONTROLLER_POLL 0
 #endif
 
+// Debug: force the emulated CPU's ROM region to read back as all-NOP
+// (0x00) instead of the real arcade ROM (see invaders_machine.c's
+// mem_read()). i8080_step() still runs every real cycle each scanline and
+// RST1/RST2 interrupts still fire and get taken - only real gameplay is
+// removed (VRAM never changes, since nothing ever writes to it; no sound
+// ports ever get hit). Diagnostic only, for isolating "the CPU is
+// executing/taking interrupts every frame" from "real, dynamically-changing
+// game content" in the HSTX sync-loss investigation (see CLAUDE.md's "HSTX
+// sync-loss caveat"). Does not touch anything in roms/. Set to 0 for
+// normal play.
+#ifndef DEBUG_CPU_NOP_ROM
+#define DEBUG_CPU_NOP_ROM 0
+#endif
+
 // Screen orientation, to match however the physical display is actually
 // mounted - see Emulator.md's "Screen orientation" section. Neither of
 // these has any effect on the DVI engine's own fixed 640x480p60 output

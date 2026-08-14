@@ -2,12 +2,24 @@
 
 #include <string.h>
 
+#include "display_config.h"
 #include "rom_data.h"
 
 static inline uint8_t mem_read(void *ctx, uint16_t addr) {
     invaders_machine_t *m = (invaders_machine_t *)ctx;
     if (__builtin_expect(addr < 0x2000, 1))
+#if DEBUG_CPU_NOP_ROM
+        // Diagnostic: force the ROM region to read back as all-NOP (0x00)
+        // instead of the real ROM - see display_config.h. i8080_step() still
+        // runs every real cycle and RST1/RST2 still get delivered and taken,
+        // but nothing ever writes to VRAM or hits a sound port, isolating
+        // "the CPU is executing/taking interrupts" from "real game content
+        // is changing" for the HSTX sync-loss investigation (CLAUDE.md's
+        // "HSTX sync-loss caveat").
+        return 0x00;
+#else
         return space_invaders_rom[addr];
+#endif
     return m->ram[(addr - 0x2000) & 0x1FFF];
 }
 
