@@ -40,6 +40,14 @@ project(Space_Invader_PICO VERSION 1.0.0 LANGUAGES C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+# Move pico_hdmi's active-line DMA buffer (line_buffer in video_output.c)
+# out of regular SRAM into a dedicated scratch-Y bank Core 0's working set
+# doesn't normally touch - an attempt at actually preventing the HDMI
+# sync-loss bug's Core 0/Core 1 bus-contention trigger, rather than just
+# detecting and recovering from it after the fact. See CLAUDE.md's "HSTX
+# sync-loss caveat".
+set(PICO_HDMI_LINE_BUFFER_IN_SCRATCH_Y ON CACHE BOOL "Place the HDMI active-line DMA buffer in scratch Y RAM" FORCE)
+
 # Add pico_hdmi library for HSTX HDMI video & audio
 add_subdirectory(lib/pico_hdmi)
 
@@ -78,6 +86,7 @@ add_executable(Space_Invader_PICO
         src/main.c
         src/video/dvi_display.c
         src/video/testcard.c
+        src/video/debug_overlay.c
         src/game.c
         src/audio/audio_i2s.c
         src/audio/sound_effects.c

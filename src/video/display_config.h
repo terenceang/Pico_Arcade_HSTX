@@ -53,6 +53,16 @@
 #define DEBUG_CPU_NOP_ROM 0
 #endif
 
+// Debug: draw a small on-screen readout (src/video/debug_overlay.c) in the
+// top-left corner - pico_hdmi's actual measured HDMI frame rate (not Core
+// 0's software-paced rate; spikes well above 60 during the HSTX sync-loss
+// bug - see CLAUDE.md's "HSTX sync-loss caveat"), updated live. Lets you
+// watch for the sync-loss symptom directly on the display, without needing
+// a serial connection. Set to 0 for normal play.
+#ifndef DEBUG_HDMI_STATUS_OVERLAY
+#define DEBUG_HDMI_STATUS_OVERLAY 0
+#endif
+
 // Screen orientation, to match however the physical display is actually
 // mounted - see Emulator.md's "Screen orientation" section. Neither of
 // these has any effect on the DVI engine's own fixed 640x480p60 output

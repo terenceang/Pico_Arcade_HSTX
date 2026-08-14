@@ -11,6 +11,9 @@
 #if DEBUG_TESTCARD
 #include "testcard.h"
 #endif
+#if DEBUG_HDMI_STATUS_OVERLAY
+#include "debug_overlay.h"
+#endif
 
 int main() {
     dvi_display_clock_init();
@@ -50,7 +53,9 @@ int main() {
            DISPLAY_REFRESH_HZ, FRAME_WIDTH, FRAME_HEIGHT);
 
     uint32_t frame_count = 0;
-    uint32_t last_hdmi_resync_count = dvi_display_get_hdmi_resync_count();
+    uint32_t last_vfc_check_frame = 0;
+    uint32_t last_vfc = dvi_display_get_video_frame_count();
+    uint32_t last_measured_hdmi_fps = DISPLAY_REFRESH_HZ;
     absolute_time_t start = get_absolute_time();
 
 #if DEBUG_TESTCARD
@@ -99,6 +104,10 @@ int main() {
             game_render_scanline(dst, y, frame_count);
         }
 
+#if DEBUG_HDMI_STATUS_OVERLAY
+        debug_overlay_draw_hdmi_status(frame_buf, last_measured_hdmi_fps);
+#endif
+
         // Publish this frame to Core 1 and reclaim the other buffer - see
         // dvi_display.c's double-buffering scheme (dvi_display_present_frame()).
         dvi_display_present_frame();
@@ -122,16 +131,18 @@ int main() {
             sleep_us(250);
         }
 
-        // Surface the Core 1 HDMI sync-loss watchdog's recoveries (see
-        // dvi_display.c's hdmi_sync_watchdog_task()) on the serial console -
-        // cheap to check (a plain counter compare) once per frame, only
-        // prints on an actual event so it doesn't spam the log.
-        uint32_t hdmi_resync_count = dvi_display_get_hdmi_resync_count();
-        if (hdmi_resync_count != last_hdmi_resync_count) {
-            printf("[WARN] HDMI sync-loss watchdog force-resynced the HSTX output (total: %lu) - see "
-                   "CLAUDE.md's \"HSTX sync-loss caveat\"\n",
-                   (unsigned long)hdmi_resync_count);
-            last_hdmi_resync_count = hdmi_resync_count;
+        // Diagnostic: once per ~1s of software frames, measure pico_hdmi's
+        // real vsync rate (video_frame_count) against Core 0's own
+        // wall-clock-paced frame_count - purely observational, no corrective
+        // action taken here. See CLAUDE.md's "HSTX sync-loss caveat".
+        if (frame_count - last_vfc_check_frame >= DISPLAY_REFRESH_HZ) {
+            uint32_t vfc = dvi_display_get_video_frame_count();
+            last_measured_hdmi_fps = vfc - last_vfc;
+            printf("[DIAG] video_frame_count advanced %lu in %lu software frames (expect ~%d)\n",
+                   (unsigned long)last_measured_hdmi_fps, (unsigned long)(frame_count - last_vfc_check_frame),
+                   DISPLAY_REFRESH_HZ);
+            last_vfc = vfc;
+            last_vfc_check_frame = frame_count;
         }
 
         ++frame_count;

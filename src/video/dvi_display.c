@@ -23,6 +23,11 @@
 #define VREG_VSEL_STR   "1.10V" // Keep in sync with VREG_VSEL above - debug print only
 #define DVI_SYS_CLK_KHZ 126000
 
+// Tried placing this in scratch Y RAM alongside pico_hdmi's own line_buffer
+// (PICO_HDMI_LINE_BUFFER_IN_SCRATCH_Y, set in CMakeLists.txt) too, since
+// it's read on every pixel by Core 1's ISR - but scratch Y is genuinely
+// tiny (it also holds Core 1's own stack by default) and doesn't have room
+// for both; the linker overflowed by 256 bytes. Left in regular SRAM.
 static uint32_t palette_packed[256];
 
 // Double-buffered 8bpp framebuffer (~76.8KB each - a pre-converted RGB565
@@ -66,8 +71,23 @@ void dvi_display_present_frame(void) {
 // bouncing_box) rather than handing Core 1 a raw pointer into cross-core
 // shared memory. active_line ranges 0..MODE_V_ACTIVE_LINES-1 (0..479); >>1
 // always lands in 0..FRAME_HEIGHT-1 (0..239), so no bounds check is needed.
+//
+// Each logical row is shown on 2 consecutive physical scanlines (vertical
+// 2x). pico_hdmi's dst is always the same static line_buffer every call
+// (video_output.c's video_output_handle_active_start() computes it fresh
+// from a fixed array each time, never a rotating/ping-ponged one) - nothing
+// touches it between our write and the DMA read that immediately follows,
+// so on the second (odd) physical line of a pair, dst still holds exactly
+// what we wrote for the first (even) one and there's no need to redo the
+// lookup - relying on this vendored, frozen library source's actual
+// behavior, not just its documented API surface, halves this callback's
+// per-line cost, which matters because Data Island construction shares the
+// same per-line budget in HDMI mode.
 static void __scratch_x("") dvi_scanline_fill_cb(uint32_t v_scanline, uint32_t active_line, uint32_t *dst) {
     (void)v_scanline;
+
+    if (active_line & 1)
+        return; // second physical line of this logical row - dst is already correct
 
     const uint8_t *src = fb_buffers[s_front_idx] + (size_t)(active_line >> 1) * FRAME_WIDTH;
     const uint32_t *pal = palette_packed;
@@ -138,78 +158,16 @@ void dvi_display_init(void) {
     printf("[DEBUG] pico_hdmi HSTX driver initialized successfully.\n");
 }
 
-// ============================================================================
-// HDMI sync-loss watchdog
-// ============================================================================
-//
-// pico_hdmi's own video_output_force_resync() doc comment (video_output.c)
-// describes a failure mode this project has independently reproduced: a
-// single corrupted/mis-sized HSTX command word desyncs the TMDS expander
-// permanently - the sink loses lock while scanlines "complete" at bus speed
-// because the FIFO no longer back-pressures the DMA engine. That symptom
-// (video_frame_count advancing far faster than the real 60Hz refresh, never
-// recovering on its own) matches this project's "HDMI sync-loss" bug
-// exactly - see CLAUDE.md's "HSTX sync-loss caveat" for the investigation
-// history. pico_hdmi ships video_output_force_resync() as the recovery
-// path, but nothing was ever calling it - once desynced, this project just
-// stayed desynced forever.
-//
-// This watchdog runs as pico_hdmi's Core 1 background task (registered
-// below), self-contained on Core 1: it compares video_frame_count's actual
-// advance against wall-clock time every ~0.5s and force-resyncs if it's
-// running far faster than the real refresh rate should allow.
-// video_output_force_resync() is documented as safe to call from Core 1
-// thread context specifically (it touches Core 1-owned DMA/HSTX state) -
-// do not move this check to Core 0.
-//
-// The root cause (an unsynchronized Core 0/Core 1 framebuffer data race)
-// has since been found and fixed - see fb_buffers[]/dvi_display_present_frame()
-// above and CLAUDE.md's "HSTX sync-loss caveat". This watchdog is kept as a
-// cheap safety net regardless, since the underlying pico_hdmi failure mode
-// it guards against could in principle still occur for some other reason.
-#define HDMI_WATCHDOG_CHECK_US 500000 // check every ~0.5s
-// Desync runs at ~137.8Hz (~2.3x nominal 60Hz - see CLAUDE.md). Trigger well
-// above ordinary jitter but well below that rate: 1.5x the expected count
-// for the elapsed window, plus a small flat margin for short windows.
-#define HDMI_WATCHDOG_RATIO_NUM 3
-#define HDMI_WATCHDOG_RATIO_DEN 2
-#define HDMI_WATCHDOG_SLACK_FRAMES 5
-
-static void hdmi_sync_watchdog_task(void) {
-    static absolute_time_t s_last_check;
-    static uint32_t s_last_vfc;
-    static bool s_started = false;
-
-    if (!s_started) {
-        s_last_check = get_absolute_time();
-        s_last_vfc = video_frame_count;
-        s_started = true;
-        return;
-    }
-
-    int64_t elapsed_us = absolute_time_diff_us(s_last_check, get_absolute_time());
-    if (elapsed_us < HDMI_WATCHDOG_CHECK_US)
-        return;
-
-    uint32_t vfc = video_frame_count;
-    uint32_t delta = vfc - s_last_vfc;
-    s_last_check = get_absolute_time();
-    s_last_vfc = vfc;
-
-    uint32_t expected = (uint32_t)((elapsed_us * DISPLAY_REFRESH_HZ) / 1000000);
-    uint32_t threshold = (expected * HDMI_WATCHDOG_RATIO_NUM) / HDMI_WATCHDOG_RATIO_DEN + HDMI_WATCHDOG_SLACK_FRAMES;
-
-    if (delta > threshold) {
-        video_output_force_resync();
-        s_last_vfc = video_frame_count; // re-baseline post-resync
-    }
-}
-
-uint32_t dvi_display_get_hdmi_resync_count(void) {
-    return video_output_resync_count;
+// Raw pico_hdmi vsync counter - see dvi_display_get_video_frame_count()'s
+// declaration in dvi_display.h for what this is for. No corrective/recovery
+// logic here by design (no resync watchdog, no reboot-on-desync) - see
+// CLAUDE.md's "HSTX sync-loss caveat": the priority is finding and fixing
+// what actually causes the desync, not detecting and reacting to it after
+// the fact.
+uint32_t dvi_display_get_video_frame_count(void) {
+    return video_frame_count;
 }
 
 void core1_main(void) {
-    video_output_set_background_task(hdmi_sync_watchdog_task);
     video_output_core1_run();
 }
