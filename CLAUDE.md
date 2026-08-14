@@ -224,25 +224,25 @@ scratch Y is genuinely tiny - it also holds Core 1's own stack by default - and 
 bytes with both in it; `palette_packed[]` was left in regular SRAM. **Soak-tested on hardware: helps, but
 does not fully eliminate the failure** - noticeably fewer drop-outs, but some still occur.
 
-**Second prevention attempt: per-scanline pacing (`SI_ROW_PACE_US` in `display_config.h`, wired into
-`main.c`'s per-scanline loop).** Rather than only reducing *where* Core 0 and Core 1 contend for memory
-(scratch-Y relocation), this attacks the *timing* side directly: pads every scanline's processing (CPU
-emulation + rendering + audio feed) out to the same fixed wall-clock duration via `sleep_until()`, regardless
-of how much real emulation work that row actually needed. This directly targets narrowing #9's finding -
-real ROM produces *irregular* per-row timing (different opcodes cost different cycles, take different code
-paths) while a NOP loop's timing is perfectly uniform and never reproduced the bug - by making Core 0's
-per-scanline rhythm uniform again even when running real code, without touching the CPU interpreter itself.
-The padding never truncates real work (a row that legitimately needs longer than `SI_ROW_PACE_US` just takes
-that long; `sleep_until()` on an already-past deadline is a no-op), so this can only add latency, never lose
-emulation cycles. Not yet soak-tested on hardware as of this note - if it doesn't help, that would suggest
-the trigger isn't really about per-row timing regularity, and the "discrete jump" observation (narrowing #9)
-deserves more scrutiny than the timing-irregularity theory has been given credit for so far.
+**Second prevention attempt tried and reverted: per-scanline pacing.** Padded every scanline's processing
+out to a fixed wall-clock duration (`SI_ROW_PACE_US`) via `sleep_until()`, on the theory that making Core 0's
+per-row timing uniform (matching the NOP-loop case, which never reproduced the bug) even when running real
+ROM would remove the trigger. **Soak-tested on hardware: made things worse, not better - caused an outright
+crash/hang.** Reverted entirely (`SI_ROW_PACE_US`, the padding call in `main.c`) rather than debugged further,
+since it was speculative to begin with and the regression wasn't worth chasing blind. Exact cause not root-
+caused - plausible candidates include the padding pushing some frames' total render time close enough to the
+16.67ms budget that the frame-pacing math in `main.c` (anchored to a fixed `start` time, never catches up
+once behind) degrades badly under sustained overrun, but this is speculation, not confirmed. If per-row
+pacing is retried, treat it as suspect until proven safe over a long soak test, and consider making the
+worst-case padded-render-loop duration provably bounded well under budget rather than empirically tuned.
 
-If neither of these fully solves this: the remaining lever is architectural - reduce how much of Core 1's
-time-critical path can ever be disturbed by Core 0's bus/timing activity at all, of which scratch-RAM
-relocation and row pacing are two instances. Whether that's fully achievable without deeper hardware-level
-tracing (a scope/logic analyzer on the actual HSTX signals, which isn't available in this environment) is
-genuinely unknown.
+If scratch-Y relocation alone doesn't fully solve this: the remaining lever is architectural - reduce how
+much of Core 1's time-critical path can ever be disturbed by Core 0's bus/timing activity at all. Whether
+that's achievable without deeper hardware-level tracing (a scope/logic analyzer on the actual HSTX signals,
+which isn't available in this environment) is genuinely unknown. `main.c` was refactored into named helper
+functions (`render_frame()`, `pace_frame_and_feed_audio()`, `update_hdmi_fps_diagnostic()`) during this
+cleanup, separate from the revert, to keep the main loop legible as this investigation continues - preserve
+that structure rather than reverting to one large inline `while(true)` body.
 
 The SNES controller subsystem remains removed (it was never the cause, but cutting it isn't costing
 anything either) - see "Add a replacement input method" in `README.md`'s Roadmap if you want controls back.
