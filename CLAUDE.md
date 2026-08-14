@@ -277,22 +277,28 @@ The essentials:
 640x480p60 output, 320x240 8bpp palettized framebuffer, and 48 kHz stereo PCM HDMI embedded audio.
 
 **System Architecture**:
-- **Core 0** (`main.c`, `dvi_display.c`): scanline/frame producer & CPU emulator. Updates the
-  320x240 8-bit palette-indexed framebuffer (`fb`), converts the whole frame to pre-packed RGB565
-  once per frame (`dvi_display_convert_frame()`), and pushes 48 kHz PCM audio samples via
+- **Core 0** (`main.c`, `dvi_display.c`): scanline/frame producer & CPU emulator. Gets a write buffer
+  via `dvi_display_get_write_buffer()`, renders the frame's 320x240 8-bit palette-indexed content into
+  it, calls `dvi_display_present_frame()` once done, and pushes 48 kHz PCM audio samples via
   `audio_i2s_feed_queue()` (called repeatedly through the frame, not as one burst).
-- **HSTX Engine** (`pico_hdmi`, Core 1): `dvi_scanline_ptr_cb()` - a scanline *pointer* callback,
-  not a fill callback - just returns the address of the frame Core 0 already converted, doing zero
-  per-pixel work on this time-critical path. Hardware TMDS-encodes scanlines over HSTX, and injects
-  audio Data Islands during H-blanking. **This split matters**: Core 1's ISR previously did the
-  8bpp->RGB565 palette lookup itself, which fit pure-DVI mode's per-line budget but not HDMI mode's
-  (Data Island construction shares that budget) and caused total, permanent loss of HDMI signal
-  lock - not just missing/glitchy audio. See `Video.md`'s pipeline overview before changing either
-  side of this split.
+- **HSTX Engine** (`pico_hdmi`, Core 1): `dvi_scanline_fill_cb()` - a scanline *fill* callback,
+  matching `pico_hdmi`'s own reference example (`examples/bouncing_box`) - does the 8bpp->RGB565
+  palette lookup + horizontal-doubling itself, per line, directly into the ISR's own line buffer.
+  Hardware TMDS-encodes scanlines over HSTX, and injects audio Data Islands during H-blanking.
+  **Double buffering matters**: `dvi_display.c` keeps two 8bpp framebuffers (`fb_buffers[2]`) and
+  Core 0 only ever writes the one Core 1 *isn't* currently reading - `dvi_display_present_frame()`
+  atomically flips which is which. An earlier design instead pre-converted the whole frame to RGB565
+  on Core 0 once per frame and handed Core 1 a raw pointer into that single (non-double-buffered)
+  array - a genuine, unsynchronized cross-core data race, since Core 0 could be mid-write to the same
+  memory Core 1's DMA was concurrently reading. That's the leading suspect for this project's HDMI
+  sync-loss bug - see CLAUDE.md's "HSTX sync-loss caveat" for the full investigation and why the
+  earlier per-pixel-lookup-in-the-ISR design (a *different*, now also-superseded problem) had been
+  avoided in the first place. See `Video.md`'s pipeline overview before changing either side of this
+  split.
 
 **Resolution scaling & Palette LUT**:
 Logical 320x240 8bpp framebuffer is converted to RGB565 and doubled to 640x480 wire timing in
-software during the Core 0 conversion pass (not HSTX hardware pixel-doubling - see Video.md).
+software inside Core 1's per-line fill callback (not HSTX hardware pixel-doubling - see Video.md).
 256 palette entries (0xRRGGBB) are mapped via `dvi_display_set_palette()`.
 
 ### File map

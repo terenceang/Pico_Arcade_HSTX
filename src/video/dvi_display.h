@@ -9,15 +9,20 @@ void dvi_display_clock_init(void);
 // Configures the board's DVI pinout/timing and brings up the HSTX HDMI driver.
 void dvi_display_init(void);
 
-// Sets the framebuffer pointer for scanline rendering.
-void dvi_display_set_buffer(uint8_t *buffer);
+// Returns the 8bpp framebuffer Core 0 should render this frame's content
+// into (FRAME_WIDTH * FRAME_HEIGHT bytes) - one of an internal double
+// buffer, so it's always safe to write without racing Core 1's scanline
+// callback, which reads the *other* buffer until dvi_display_present_frame()
+// flips them. Call once per frame, before rendering scanlines; the returned
+// pointer is only valid for that frame (a new call after
+// dvi_display_present_frame() may return a different buffer).
+uint8_t *dvi_display_get_write_buffer(void);
 
-// Converts the current 8bpp framebuffer (set via dvi_display_set_buffer) to
-// pre-packed RGB565 scanlines Core 1's ISR can return directly with no
-// per-pixel work. Call once per frame from Core 0, after rendering the
-// frame's content into the framebuffer and before the next scanline sweep
-// needs it.
-void dvi_display_convert_frame(void);
+// Marks the buffer from dvi_display_get_write_buffer() as complete and
+// atomically exposes it to Core 1 for scanout, reclaiming the buffer Core 1
+// was previously reading. Call once per frame from Core 0, after rendering
+// all of the frame's scanlines.
+void dvi_display_present_frame(void);
 
 // Sets palette RGB888 color for 8bpp index.
 void dvi_display_set_palette(uint8_t index, uint32_t rgb888);

@@ -12,8 +12,6 @@
 #include "testcard.h"
 #endif
 
-static uint8_t fb[FRAME_WIDTH * FRAME_HEIGHT];
-
 int main() {
     dvi_display_clock_init();
     stdio_init_all();
@@ -42,8 +40,6 @@ int main() {
 
     printf("[DEBUG] Pre-filling audio Data Island queue...\n");
     audio_i2s_prefill_queue(AUDIO_QUEUE_TARGET_LEVEL);
-
-    dvi_display_set_buffer(fb);
 
     printf("[DEBUG] Launching Core 1...\n");
     multicore_launch_core1(core1_main);
@@ -80,6 +76,7 @@ int main() {
             test_tone_stopped = true;
         }
 #endif
+        uint8_t *frame_buf = dvi_display_get_write_buffer();
         for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
             // Keep the HDMI audio Data Island queue continuously topped up
             // across the frame rather than front-loading it once per frame -
@@ -92,7 +89,7 @@ int main() {
             if ((y & 7) == 0) {
                 audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
             }
-            uint8_t *dst = fb + y * FRAME_WIDTH;
+            uint8_t *dst = frame_buf + y * FRAME_WIDTH;
 #if DEBUG_TESTCARD
             if (show_testcard) {
                 testcard_render_scanline(dst, y, frame_count);
@@ -102,10 +99,9 @@ int main() {
             game_render_scanline(dst, y, frame_count);
         }
 
-        // Convert the freshly-rendered 8bpp frame to pre-packed RGB565 on
-        // Core 0 (ample time budget) - Core 1's ISR then just returns a
-        // pointer, with no per-pixel palette lookups on that critical path.
-        dvi_display_convert_frame();
+        // Publish this frame to Core 1 and reclaim the other buffer - see
+        // dvi_display.c's double-buffering scheme (dvi_display_present_frame()).
+        dvi_display_present_frame();
 
         // Video's pacing is this deadline alone, computed the same way
         // regardless of what audio does below - the frame cadence is

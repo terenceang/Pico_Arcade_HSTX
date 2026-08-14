@@ -23,49 +23,66 @@
 #define VREG_VSEL_STR   "1.10V" // Keep in sync with VREG_VSEL above - debug print only
 #define DVI_SYS_CLK_KHZ 126000
 
-static uint8_t *display_fb = NULL;
 static uint16_t palette_rgb565[256];
 static uint32_t palette_packed[256];
 
-// Pre-converted RGB565 lines, one per logical framebuffer row, each holding
-// MODE_H_ACTIVE_PIXELS/2 = 320 packed words (640 physical pixels, already
-// 2x horizontally doubled). Filled by dvi_display_convert_frame() on Core 0
-// (ample time budget) once per frame; Core 1's ISR then just returns a
-// pointer into this - no per-pixel palette lookups on the time-critical
-// path. See display_config.h's FRAME_WIDTH/HEIGHT comment: a native 640-wide
-// framebuffer with per-pixel lookups *in the ISR* blew HDMI mode's per-line
-// budget (confirmed by swapping in a zero-cost callback, which was rock
-// solid) - this pointer-callback design is pico_hdmi's own intended fix for
-// that class of problem, per video_output.h's scanline-pointer-callback docs.
-static uint32_t rgb565_lines[FRAME_HEIGHT][FRAME_WIDTH];
+// Double-buffered 8bpp framebuffer (~76.8KB each - a pre-converted RGB565
+// double buffer would be ~300KB each, and two of those (~600KB) don't fit
+// in the RP2350's 520KB SRAM). Core 0 only ever writes into fb_buffers[the
+// index NOT currently exposed to Core 1]; dvi_display_present_frame()
+// atomically flips which index Core 1 reads, once per frame, so Core 1
+// never observes a buffer Core 0 is concurrently writing. This replaces an
+// earlier design (single un-double-buffered pre-converted RGB565 array,
+// written by Core 0 and read by Core 1's DMA with no synchronization at
+// all) that had a genuine, per-frame data race - independently confirmed as
+// the leading suspect for this project's HDMI sync-loss bug after reading
+// pico_hdmi's own reference example (examples/bouncing_box), which never
+// shares a buffer across cores like this at all - see CLAUDE.md's "HSTX
+// sync-loss caveat".
+static uint8_t fb_buffers[2][FRAME_WIDTH * FRAME_HEIGHT];
+static volatile int s_front_idx = 0; // buffer index Core 1's ISR reads from
+static int s_write_idx = 1;          // buffer index Core 0 is filling this frame (Core 0-only state)
 
-void dvi_display_convert_frame(void) {
-    if (!display_fb)
-        return;
-
-    const uint32_t *pal = palette_packed;
-    for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
-        const uint8_t *src = &display_fb[y * FRAME_WIDTH];
-        uint32_t *dst = rgb565_lines[y];
-
-        unsigned i = 0;
-        for (; i + 3 < FRAME_WIDTH; i += 4) {
-            dst[i + 0] = pal[src[i + 0]];
-            dst[i + 1] = pal[src[i + 1]];
-            dst[i + 2] = pal[src[i + 2]];
-            dst[i + 3] = pal[src[i + 3]];
-        }
-        for (; i < FRAME_WIDTH; ++i) {
-            dst[i] = pal[src[i]];
-        }
-    }
+uint8_t *dvi_display_get_write_buffer(void) {
+    return fb_buffers[s_write_idx];
 }
 
-// active_line ranges 0..MODE_V_ACTIVE_LINES-1 (0..479); >>1 always lands in
-// 0..FRAME_HEIGHT-1 (0..239), so no bounds check is needed.
-static const uint32_t *__scratch_x("") dvi_scanline_ptr_cb(uint32_t v_scanline, uint32_t active_line) {
+void dvi_display_present_frame(void) {
+    // Publish the just-filled buffer to Core 1 and reclaim the buffer Core 1
+    // was reading (safe the instant the flip below becomes visible, since
+    // dvi_scanline_fill_cb() re-reads s_front_idx fresh on every scanline -
+    // it will never touch the old buffer again after this point).
+    __compiler_memory_barrier(); // buffer writes must be visible before the flip publishes them
+    int new_front = s_write_idx;
+    s_write_idx = s_front_idx;
+    s_front_idx = new_front;
+}
+
+// Runs on Core 1, inside the time-critical scanline ISR - per-line palette
+// lookup (320 lookups, not the 640 that blew HDMI mode's per-line budget in
+// an earlier, native-640-wide-framebuffer design; see display_config.h's
+// FRAME_WIDTH/HEIGHT comment) plus the same horizontal-doubling packing the
+// old Core-0-side conversion pass used to do. Matches pico_hdmi's own
+// reference example's synchronous fill-callback pattern (examples/
+// bouncing_box) rather than handing Core 1 a raw pointer into cross-core
+// shared memory. active_line ranges 0..MODE_V_ACTIVE_LINES-1 (0..479); >>1
+// always lands in 0..FRAME_HEIGHT-1 (0..239), so no bounds check is needed.
+static void __scratch_x("") dvi_scanline_fill_cb(uint32_t v_scanline, uint32_t active_line, uint32_t *dst) {
     (void)v_scanline;
-    return rgb565_lines[active_line >> 1];
+
+    const uint8_t *src = fb_buffers[s_front_idx] + (size_t)(active_line >> 1) * FRAME_WIDTH;
+    const uint32_t *pal = palette_packed;
+
+    unsigned i = 0;
+    for (; i + 3 < FRAME_WIDTH; i += 4) {
+        dst[i + 0] = pal[src[i + 0]];
+        dst[i + 1] = pal[src[i + 1]];
+        dst[i + 2] = pal[src[i + 2]];
+        dst[i + 3] = pal[src[i + 3]];
+    }
+    for (; i < FRAME_WIDTH; ++i) {
+        dst[i] = pal[src[i]];
+    }
 }
 
 void dvi_display_clock_init(void) {
@@ -81,10 +98,6 @@ void dvi_display_set_palette(uint8_t index, uint32_t rgb888) {
     uint16_t color16 = (r5 << 11) | (g6 << 5) | b5;
     palette_rgb565[index] = color16;
     palette_packed[index] = (uint32_t)color16 | ((uint32_t)color16 << 16);
-}
-
-void dvi_display_set_buffer(uint8_t *buffer) {
-    display_fb = buffer;
 }
 
 void dvi_display_init(void) {
@@ -122,7 +135,7 @@ void dvi_display_init(void) {
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
     video_output_set_dvi_mode(false); // HDMI mode: Data Islands + audio enabled
     pico_hdmi_set_audio_sample_rate(AUDIO_SAMPLE_RATE);
-    video_output_set_scanline_pointer_callback(dvi_scanline_ptr_cb);
+    video_output_set_scanline_callback(dvi_scanline_fill_cb);
 
     printf("[DEBUG] pico_hdmi HSTX driver initialized successfully.\n");
 }

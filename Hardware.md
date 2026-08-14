@@ -56,20 +56,22 @@ game currently just idles on the attract screen.
 * **Core 0**:
   * Initializes system clock (126 MHz), voltage regulator (1.10V), and stdio (USB CDC only - UART is disabled, see CMakeLists.txt).
   * Executes Intel 8080 CPU emulation.
-  * Renders 8bpp scanlines directly into `fb` (`game_render_scanline()`).
-  * Converts the whole 8bpp frame to pre-packed RGB565 once per frame
-    (`dvi_display_convert_frame()`) - deliberately kept off Core 1's ISR,
-    which used to do this lookup per pixel and blew HDMI mode's per-line
-    timing budget (Data Island construction shares that budget) - see
-    Video.md's pipeline overview.
+  * Renders 8bpp scanlines directly into a write buffer from
+    `dvi_display_get_write_buffer()` (`game_render_scanline()`), then calls
+    `dvi_display_present_frame()` once the frame is complete.
   * Generates 48 kHz PCM audio samples and pushes HDMI Data Islands to
     `pico_hdmi` (`audio_i2s_feed_queue()`), called repeatedly through the
     frame rather than as a single once-per-frame burst.
   * Microsecond wall-clock anchored loop (`sleep_until()`).
 * **HSTX Engine & DMA (`pico_hdmi`)**:
-  * `dvi_scanline_ptr_cb` (a scanline *pointer* callback) returns the
-    address of the frame Core 0 already converted - no per-pixel work on
-    this time-critical path.
+  * `dvi_scanline_fill_cb` (a scanline *fill* callback) does the 8bpp->RGB565
+    palette lookup and horizontal doubling itself, per line, reading from
+    whichever of `dvi_display.c`'s two 8bpp framebuffers Core 0 isn't
+    currently writing (`fb_buffers[2]`, flipped by `dvi_display_present_frame()`)
+    - matches `pico_hdmi`'s own reference example (`examples/bouncing_box`),
+    rather than an earlier design that handed Core 1 a raw pointer into a
+    single, non-double-buffered pre-converted array - see `CLAUDE.md`'s
+    "HSTX sync-loss caveat" for why that was a real cross-core race.
   * Hardware TMDS encoding via RP2350 HSTX peripheral.
   * DMA streams scanline buffers and HDMI Data Island packets (Audio samples, InfoFrames, ACR) during H-blanking/sync.
 
