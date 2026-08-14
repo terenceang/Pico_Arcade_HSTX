@@ -34,9 +34,12 @@
 // the tone just keeps playing indefinitely - useful on its own for
 // listening for HDMI audio Data Island underruns/glitches (e.g. verifying
 // the queue-refill cadence in main.c keeps up) independent of any game
-// sound-effect logic.
+// sound-effect logic. Left on by request while the HSTX sync-loss
+// investigation (CLAUDE.md's "HSTX sync-loss caveat") is ongoing, so every
+// build has an audible check available without needing to flip this each
+// time - set back to 0 once that investigation is closed out.
 #ifndef DEBUG_AUDIO_TEST_TONE
-#define DEBUG_AUDIO_TEST_TONE 0
+#define DEBUG_AUDIO_TEST_TONE 1
 #endif
 
 // Debug: force the emulated CPU's ROM region to read back as all-NOP
