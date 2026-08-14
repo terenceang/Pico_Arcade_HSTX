@@ -39,7 +39,13 @@
 #define DEBUG_CONTROLLER_TESTCARD 0
 #endif
 
-// Debug audio test tone: set to 1 to play test tone during test card, 0 to disable.
+// Debug audio test tone: set to 1 to play a continuous 1kHz tone, 0 to
+// disable. With DEBUG_TESTCARD also on, the tone accompanies the test card
+// and stops once the game takes over. With DEBUG_TESTCARD off (as here),
+// the tone just keeps playing indefinitely - useful on its own for
+// listening for HDMI audio Data Island underruns/glitches (e.g. verifying
+// the queue-refill cadence in main.c keeps up) independent of any game
+// sound-effect logic.
 #ifndef DEBUG_AUDIO_TEST_TONE
 #define DEBUG_AUDIO_TEST_TONE 0
 #endif

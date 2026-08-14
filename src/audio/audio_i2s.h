@@ -19,29 +19,36 @@
 // samples.
 
 #define AUDIO_SAMPLE_RATE 48000
-#define AUDIO_FRAMES_PER_VIDEO_FRAME (AUDIO_SAMPLE_RATE / DISPLAY_REFRESH_HZ)
 
-// Default HDMI audio queue fill target for audio_i2s_feed_queue(). Keep this
-// low enough that a late Core 0 frame does not trigger a sustained queue-
-// churn loop; the queue is only a short-lived buffer for the HSTX scheduler,
-// not a large application message queue.
-#define AUDIO_QUEUE_TARGET_LEVEL 32
+// Default HDMI audio queue fill target for audio_i2s_feed_queue() - about
+// one video frame's worth (48kHz / 4 samples per packet / 60Hz = ~200
+// packets), well under the ring buffer's 256-entry capacity
+// (DI_RING_BUFFER_SIZE in hstx_data_island_queue.c). This is buffer *depth*,
+// not burst size - audio_i2s_feed_queue() caps how much it will push in any
+// single call regardless of this target, so raising the target only means
+// "keep more slack in hand," never "allow one big catch-up burst." A
+// shallow target (this used to be 32, ~2.7ms) leaves almost no margin
+// against ordinary Core 0 scheduling jitter (interrupts, USB stdio, etc.)
+// and was audibly glitchy in practice even with continuous refeeding -
+// ~200 (~16.7ms) gives enough slack to ride that out.
+#define AUDIO_QUEUE_TARGET_LEVEL 200
 
 // Resets the software mixer's voice state. Call once, before the main
-// loop starts calling audio_i2s_step_frame().
+// loop starts calling audio_i2s_feed_queue().
 void audio_i2s_init(void);
-
-// Steps the software audio mixer per frame (AUDIO_FRAMES_PER_VIDEO_FRAME
-// samples) and pushes the audio Data Island packets to the HSTX queue.
-// Equivalent to audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL) - kept for
-// callers that only need a once-per-frame top-up.
-void audio_i2s_step_frame(void);
 
 // Mixes and pushes 4-sample Data Island packets until the HDMI audio queue
 // reaches target_level. Call this periodically (not just once per frame) so
 // the queue stays continuously topped up rather than front-loaded in one
 // burst - see audio_i2s.c.
 void audio_i2s_feed_queue(uint32_t target_level);
+
+// Blocks until the HDMI audio queue reaches target_level, ignoring
+// audio_i2s_feed_queue()'s usual per-call push cap - safe only because
+// nothing is draining the queue yet. Call once at boot, before
+// multicore_launch_core1() brings up the Core 1/HSTX consumer; never call
+// this once Core 1 is running (see audio_i2s_feed_queue()'s cap for why).
+void audio_i2s_prefill_queue(uint32_t target_level);
 
 // No physical amp/DAC in this design - always a no-op. Kept so
 // sound_effects.c's port 3 bit 5 (AMP-enable) wiring has somewhere to write

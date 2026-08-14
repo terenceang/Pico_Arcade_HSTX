@@ -14,13 +14,23 @@ A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 C
 - Embedded 48 kHz stereo PCM HDMI Data Island audio transport, driven without external I2S hardware directly over HDMI.
 - A debug test card (color bars, grayscale ramp, moving sync bar) for verifying the display pipeline independent of any game code.
 
-## Timing / HDMI stability note
+## Timing / HDMI stability note (KNOWN ISSUE - unresolved)
 
-This project has one hardware-level caveat worth preserving in the repo: the HDMI signal can lose lock only when Core 0 stays chronically late while the audio producer keeps re-filling the HSTX Data Island queue at high rate. In the reproduced failure, Core 0 stayed alive the whole time, but Core 1's scan clock jumped from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stayed there. Serial-state inspection showed the scanline counters and DMA line lengths were still normal, so the failure is not in the emulator or in the simple framebuffer conversion path itself; it is in the vendor HSTX/Data Island timing path under sustained queue churn.
+This project has one hardware-level caveat worth preserving in the repo: after a while running, the HDMI
+signal can lose lock. In the reproduced failure, Core 0 stays alive the whole time, but Core 1's scan clock
+jumps from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stays there. Serial-state inspection showed the scanline
+counters and DMA line lengths were still normal, so the failure is not in the emulator or in the simple
+framebuffer conversion path itself; it is in the vendor HSTX/Data Island timing path.
 
-This means the practical rule for future changes is: do not let Core 0 run behind on frame work while continuing a large queue-fill loop. The current mitigation is to keep the audio queue topped up in a bounded, low-target way rather than an unbounded fill loop, and to keep Core 0 render work under the frame budget. The render path is still the dominant source of latency in this project, so any change that causes sustained backlog should be treated as a potential sync-loss trigger.
-
-This is not a sign that the emulator core is failing; it is a HSTX timing guardrail issue in the HDMI audio/video pipeline and should be debugged with real hardware timing tools if it reappears.
+The audio Data Island queue was the leading suspect (it used to be fed only once per frame, in one small
+burst, leaving it starved for most of each frame) and has since been fixed: it's now kept continuously
+topped up across the whole frame - including Core 0's idle time between frames, not just its short render
+burst - at a deep enough buffer level to absorb ordinary scheduling jitter, while still bounding any single
+refill to a small packet count so Core 0 never re-fills it in one large catch-up burst. Audio is now smooth
+and glitch-free on hardware. **The HDMI sync-loss still reproduces after a while even with audio fixed**, so
+audio-queue churn was not the (sole) root cause - see `CLAUDE.md`'s "HSTX sync-loss caveat" for the full
+history and what to check next. This is not a sign that the emulator core is failing; it is a HSTX timing
+issue in the HDMI video pipeline itself and should be debugged with real hardware timing tools.
 
 ## Hardware
 
@@ -77,6 +87,7 @@ By default, the app boots straight into the game (`DEBUG_TESTCARD 0` in `src/dis
 - [x] Video RAM → framebuffer conversion (8bpp indexed, letterboxing, color overlay)
 - [x] SNES controller input wired to `invaders_machine_set_in1()`
 - [x] Software audio mixer & sound-effect trigger decoder (`src/audio/`)
+- [ ] Root-cause and fix intermittent HDMI sync-loss after sustained runtime - audio-queue starvation was fixed and ruled out as the sole cause; see "Timing / HDMI stability note" above and `CLAUDE.md`'s "HSTX sync-loss caveat"
 
 ## Acknowledgements & Attributions
 

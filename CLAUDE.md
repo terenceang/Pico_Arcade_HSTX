@@ -19,20 +19,38 @@ HDMI Data Islands by `pico_hdmi`) are built and working. See the Roadmap in `REA
 see `roms/README.md`). Without it in `roms/`, the build substitutes a zero-filled
 placeholder so compilation still succeeds, but the firmware won't run the actual game.
 
-## HSTX sync-loss caveat
+## HSTX sync-loss caveat (STATUS: unresolved, still open as of 2026-08-14)
 
 This project has reproduced a real hardware failure mode in the vendored HDMI HSTX/Data Island path:
-Core 0 stays alive and running, but under sustained audio-queue churn while the frame render falls behind,
-Core 1's scan clock snaps from 60 Hz to a fixed ~137.8 Hz (~2.3x) and never recovers. It is not a CPU crash,
-not a corrupted emulator state, and not a simple DMA-length corruption visible from a serial log. The failure
-precondition is: Core 0 remains chronically unable to keep the audio queue topped up while still calling the
-feed loop every frame; a steady empty queue from boot or a sudden real-to-silence transition alone does not
-trigger it, but sustained high-rate churn under backlog does.
+Core 0 stays alive and running, but after some period of normal operation, Core 1's scan clock snaps from
+60 Hz to a fixed ~137.8 Hz (~2.3x) and never recovers. It is not a CPU crash, not a corrupted emulator
+state, and not a simple DMA-length corruption visible from a serial log.
 
-The practical mitigation path is to reduce Core 0 render latency and keep queue refills bounded rather than
-unbounded. This project has already demonstrated that large render_us values are what make the trigger condition
-possible in the first place. If you touch the audio queue or HSTX timing path, treat any sustained backlog as a
-potential HDMI sync-loss hazard and validate on hardware before claiming the fix is safe.
+**The audio-queue-churn theory below was the leading hypothesis and has since been disproven as the
+(sole) cause.** `src/main.c` / `src/audio/audio_i2s.*` were reworked so the Data Island queue is (a) fed
+continuously across the *entire* frame period - including Core 0's idle tail between frames, not just its
+short render/convert compute burst, which is where the queue was silently going unfed before - and (b) kept
+at a deep ~200-packet (~one video frame) buffer depth so ordinary Core 0 scheduling jitter can't drain it,
+while every individual refill call still only ever pushes a small, bounded number of packets (never one big
+catch-up burst). Audio is now verified smooth and glitch-free on real hardware (use `DEBUG_AUDIO_TEST_TONE`'s
+continuous 1kHz tone to check this independently of game sound effects) - but the HDMI sync-loss still
+happens after a while under the same conditions. That means either the trigger isn't audio-related at all,
+or audio-queue churn was only one of several contributing factors, not the root cause.
+
+Original (now-superseded) hypothesis, kept for context: sustained high-rate audio-queue churn while Core 0's
+frame render falls behind was believed to be the trigger - a steady empty queue from boot, or a one-time
+real-to-silence transition, did not reproduce it, but repeated large refill bursts under backlog did. The
+mitigation of bounding queue refills is still good practice and is kept in the current code, but should no
+longer be treated as *the* fix for this failure - only as one contributing precaution.
+
+Next places to look, since audio is now ruled out as the sole cause: Core 1's own ISR timing budget under
+*sustained* operation (does it only degrade after some duration, suggesting drift/leak rather than a
+one-shot overrun?), whether the failure correlates with wall-clock uptime or frame count rather than any
+specific workload, and factors external to this codebase (HDMI sink behavior/EDID re-negotiation, cable
+quality, thermal effects on the RP2350's clock/PLL). If you touch the audio queue, HSTX timing path, or
+Core 1's ISR, treat sustained HDMI sync-loss as a still-open bug and validate on hardware before claiming
+any related change fixes it - this exact mistake (declaring it fixed based on the audio-churn theory alone)
+is why this caveat now documents a superseded hypothesis instead of a closed issue.
 
 ## Build
 

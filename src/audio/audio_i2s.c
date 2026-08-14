@@ -127,8 +127,16 @@ void audio_i2s_feed_queue(uint32_t target_level) {
     }
 }
 
-void audio_i2s_step_frame(void) {
-    audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
+// audio_i2s_feed_queue()'s per-call push cap is the anti-churn bound that
+// matters once Core 1/HSTX is actively draining the queue in real time.
+// Before Core 1 has been launched, nothing is consuming yet, so there's no
+// burst/churn hazard - only an empty buffer that needs to actually reach
+// target_level before real-time playback starts. Call once at boot, before
+// multicore_launch_core1().
+void audio_i2s_prefill_queue(uint32_t target_level) {
+    while (hstx_di_queue_get_level() < target_level) {
+        audio_i2s_feed_queue(target_level);
+    }
 }
 
 void audio_i2s_set_mute(bool mute) {

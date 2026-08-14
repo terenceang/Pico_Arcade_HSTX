@@ -48,7 +48,7 @@ int main() {
 #endif
 
     printf("[DEBUG] Pre-filling audio Data Island queue...\n");
-    audio_i2s_feed_queue(8);
+    audio_i2s_prefill_queue(AUDIO_QUEUE_TARGET_LEVEL);
 
     dvi_display_set_buffer(fb);
 
@@ -60,10 +60,7 @@ int main() {
     printf("\n[STATUS] Rendering HSTX HDMI 640x480 @ %dHz (%dx%d 8bpp palettized + HDMI Audio)...\n",
            DISPLAY_REFRESH_HZ, FRAME_WIDTH, FRAME_HEIGHT);
 
-    const uint64_t CHUNK_US = (uint64_t)AUDIO_FRAMES_PER_VIDEO_FRAME * 1000000ull / AUDIO_SAMPLE_RATE;
-
     uint32_t frame_count = 0;
-    uint64_t chunks_pushed = 0;
     absolute_time_t start = get_absolute_time();
 
 #if DEBUG_TESTCARD
@@ -71,18 +68,18 @@ int main() {
 #endif
 
     while (true) {
-        audio_i2s_feed_queue(8);
-        ++chunks_pushed;
-
 #if DEBUG_TESTCARD
         bool show_testcard = (DEBUG_TESTCARD_SECONDS == 0) || (frame_count < testcard_frames);
 #else
         bool show_testcard = false;
 #endif
-#if DEBUG_AUDIO_TEST_TONE
+#if DEBUG_AUDIO_TEST_TONE && DEBUG_TESTCARD
         // Tone only accompanies the colour-bar test card's audio/video sanity
         // check - stop it as soon as that card isn't what's showing, so it
         // doesn't keep playing under the controller test card or the game.
+        // (With DEBUG_TESTCARD off, there's no card to accompany - the tone
+        // just plays continuously the whole time, e.g. for verifying the
+        // HDMI audio queue stays glitch-free under real gameplay.)
         static bool test_tone_stopped = false;
         if (!show_testcard && !test_tone_stopped) {
             audio_i2s_debug_stop_test_tone();
@@ -90,6 +87,17 @@ int main() {
         }
 #endif
         for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
+            // Keep the HDMI audio Data Island queue continuously topped up
+            // across the frame rather than front-loading it once per frame -
+            // consumption is ~200 packets/frame (48kHz / 4 samples per
+            // packet / 60Hz), so a once-per-frame call cannot keep up.
+            // Bounded by audio_i2s_feed_queue()'s own per-call cap, so this
+            // stays many small top-ups rather than the large recovery burst
+            // that previously triggered the HSTX sync-loss failure mode
+            // (see CLAUDE.md's "HSTX sync-loss caveat").
+            if ((y & 7) == 0) {
+                audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
+            }
             uint8_t *dst = fb + y * FRAME_WIDTH;
 #if DEBUG_TESTCARD
             if (show_testcard) {
@@ -109,8 +117,24 @@ int main() {
         // pointer, with no per-pixel palette lookups on that critical path.
         dvi_display_convert_frame();
 
-        uint64_t target_us = (chunks_pushed * 1000000ull) / DISPLAY_REFRESH_HZ;
-        sleep_until(delayed_by_us(start, target_us));
+        // Video's pacing is this deadline alone, computed the same way
+        // regardless of what audio does below - the frame cadence is
+        // entirely wall-clock/HSTX-hardware driven, never audio-driven.
+        uint64_t target_us = ((uint64_t)frame_count + 1) * 1000000ull / DISPLAY_REFRESH_HZ;
+        absolute_time_t deadline = delayed_by_us(start, target_us);
+
+        // Rendering + conversion above finishes in a few ms, well inside the
+        // 16.67ms frame budget - a single sleep_until() here would leave the
+        // rest of the frame's idle tail completely unfed while Core 1 keeps
+        // draining the audio queue in real time, which is what was causing
+        // audio to starve/drop out after a few frames. Keep polling and
+        // topping the queue up in small steps until the same deadline
+        // instead, so audio stays fed for the whole frame period without
+        // changing the frame's timing by a single microsecond.
+        while (!time_reached(deadline)) {
+            audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
+            sleep_us(250);
+        }
 
         ++frame_count;
     }
