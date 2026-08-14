@@ -4,9 +4,9 @@
 #include "pico_hdmi/video_output.h"
 
 // Framebuffer resolution (320x240 8bpp palettized, 2x pixel/line-doubled to
-// the physical 640x480p60 wire timing in dvi_scanline_cb). A native 640x480
-// framebuffer forces 640 independent palette lookups per scanline inside
-// Core 1's DMA ISR, which fits comfortably in pure-DVI mode's per-line
+// the physical 640x480p60 wire timing in dvi_scanline_fill_cb). A native
+// 640x480 framebuffer forces 640 independent palette lookups per scanline
+// inside Core 1's DMA ISR, which fits comfortably in pure-DVI mode's per-line
 // budget but not HDMI mode's tighter one (Data Island construction eats
 // into the same budget) - confirmed by swapping in a near-zero-cost
 // scanline callback, which made HDMI mode rock solid. Halving the lookup

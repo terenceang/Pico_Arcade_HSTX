@@ -23,7 +23,6 @@
 #define VREG_VSEL_STR   "1.10V" // Keep in sync with VREG_VSEL above - debug print only
 #define DVI_SYS_CLK_KHZ 126000
 
-static uint16_t palette_rgb565[256];
 static uint32_t palette_packed[256];
 
 // Double-buffered 8bpp framebuffer (~76.8KB each - a pre-converted RGB565
@@ -96,7 +95,6 @@ void dvi_display_set_palette(uint8_t index, uint32_t rgb888) {
     uint16_t g6 = (rgb888 >> 10) & 0x3F;
     uint16_t b5 = (rgb888 >> 3) & 0x1F;
     uint16_t color16 = (r5 << 11) | (g6 << 5) | b5;
-    palette_rgb565[index] = color16;
     palette_packed[index] = (uint32_t)color16 | ((uint32_t)color16 << 16);
 }
 
@@ -159,12 +157,16 @@ void dvi_display_init(void) {
 // This watchdog runs as pico_hdmi's Core 1 background task (registered
 // below), self-contained on Core 1: it compares video_frame_count's actual
 // advance against wall-clock time every ~0.5s and force-resyncs if it's
-// running far faster than the real refresh rate should allow. It does NOT
-// fix why the desync happens in the first place (still unknown) - it only
-// makes the symptom transient/self-healing instead of permanent.
+// running far faster than the real refresh rate should allow.
 // video_output_force_resync() is documented as safe to call from Core 1
 // thread context specifically (it touches Core 1-owned DMA/HSTX state) -
 // do not move this check to Core 0.
+//
+// The root cause (an unsynchronized Core 0/Core 1 framebuffer data race)
+// has since been found and fixed - see fb_buffers[]/dvi_display_present_frame()
+// above and CLAUDE.md's "HSTX sync-loss caveat". This watchdog is kept as a
+// cheap safety net regardless, since the underlying pico_hdmi failure mode
+// it guards against could in principle still occur for some other reason.
 #define HDMI_WATCHDOG_CHECK_US 500000 // check every ~0.5s
 // Desync runs at ~137.8Hz (~2.3x nominal 60Hz - see CLAUDE.md). Trigger well
 // above ordinary jitter but well below that rate: 1.5x the expected count

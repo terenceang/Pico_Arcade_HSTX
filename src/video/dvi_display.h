@@ -1,9 +1,11 @@
 #ifndef DVI_DISPLAY_H
 #define DVI_DISPLAY_H
 
+#include <stdint.h>
+
 // Raises core voltage and sets the system clock for the DVI bit clock.
 // Must be called before stdio_init_all(), since it must run before the
-// clock is stable for USB/UART.
+// clock is stable for USB.
 void dvi_display_clock_init(void);
 
 // Configures the board's DVI pinout/timing and brings up the HSTX HDMI driver.
