@@ -16,21 +16,28 @@ A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 C
 
 ## Timing / HDMI stability note (KNOWN ISSUE - unresolved)
 
-This project has one hardware-level caveat worth preserving in the repo: after a while running, the HDMI
-signal can lose lock. In the reproduced failure, Core 0 stays alive the whole time, but Core 1's scan clock
-jumps from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stays there. Serial-state inspection showed the scanline
-counters and DMA line lengths were still normal, so the failure is not in the emulator or in the simple
-framebuffer conversion path itself; it is in the vendor HSTX/Data Island timing path.
+This project has one hardware-level caveat worth preserving in the repo: after a while running the actual
+game, the HDMI signal can lose lock. In the reproduced failure, Core 0 stays alive the whole time, but
+Core 1's scan clock jumps from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stays there. Serial-state inspection
+showed the scanline counters and DMA line lengths were still normal.
 
-The audio Data Island queue was the leading suspect (it used to be fed only once per frame, in one small
-burst, leaving it starved for most of each frame) and has since been fixed: it's now kept continuously
+The audio Data Island queue was the first leading suspect (it used to be fed only once per frame, in one
+small burst, leaving it starved for most of each frame) and has since been fixed: it's now kept continuously
 topped up across the whole frame - including Core 0's idle time between frames, not just its short render
 burst - at a deep enough buffer level to absorb ordinary scheduling jitter, while still bounding any single
 refill to a small packet count so Core 0 never re-fills it in one large catch-up burst. Audio is now smooth
-and glitch-free on hardware. **The HDMI sync-loss still reproduces after a while even with audio fixed**, so
-audio-queue churn was not the (sole) root cause - see `CLAUDE.md`'s "HSTX sync-loss caveat" for the full
-history and what to check next. This is not a sign that the emulator core is failing; it is a HSTX timing
-issue in the HDMI video pipeline itself and should be debugged with real hardware timing tools.
+and glitch-free on hardware. **The HDMI sync-loss still reproduced after a while even with audio fixed**, so
+audio-queue churn was not the (sole) root cause.
+
+A follow-up soak test with the debug test card running permanently instead of the game (`DEBUG_TESTCARD 1`,
+which also skips CPU emulation, interrupt delivery, and controller polling entirely) ran indefinitely with
+**no** sync-loss. That confirms the failure needs the actual game running - it's not the base HSTX/DMA video
+path or the audio path on their own - and narrows it to something specific to `src/game.c`/`src/emu/`'s
+execution: CPU emulation, per-frame interrupts, controller polling, or the game's own VRAM-driven rendering.
+See `CLAUDE.md`'s "HSTX sync-loss caveat" for the full history and the next diagnostic step. This is not a
+sign that the 8080 core's *emulation correctness* is wrong (the game runs and plays fine) - it's a timing/
+resource-interaction issue between that workload and the HDMI pipeline, and should be debugged with real
+hardware timing tools.
 
 ## Hardware
 

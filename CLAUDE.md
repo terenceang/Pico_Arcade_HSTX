@@ -43,14 +43,33 @@ real-to-silence transition, did not reproduce it, but repeated large refill burs
 mitigation of bounding queue refills is still good practice and is kept in the current code, but should no
 longer be treated as *the* fix for this failure - only as one contributing precaution.
 
-Next places to look, since audio is now ruled out as the sole cause: Core 1's own ISR timing budget under
-*sustained* operation (does it only degrade after some duration, suggesting drift/leak rather than a
-one-shot overrun?), whether the failure correlates with wall-clock uptime or frame count rather than any
-specific workload, and factors external to this codebase (HDMI sink behavior/EDID re-negotiation, cable
-quality, thermal effects on the RP2350's clock/PLL). If you touch the audio queue, HSTX timing path, or
-Core 1's ISR, treat sustained HDMI sync-loss as a still-open bug and validate on hardware before claiming
-any related change fixes it - this exact mistake (declaring it fixed based on the audio-churn theory alone)
-is why this caveat now documents a superseded hypothesis instead of a closed issue.
+**Confirmed narrowing (soak test on real hardware, `DEBUG_TESTCARD 1` + `DEBUG_AUDIO_TEST_TONE 1`, permanent
+test card, game never shown):** does not reproduce. With the test card running indefinitely, `game.c`'s
+`game_render_scanline()` is never called, which means `i8080_step()` never executes (zero CPU emulation),
+`invaders_machine_interrupt_mid_screen()`/`_vblank()` never fire, and `snes_controller_read()` is never
+polled - only `testcard_render_scanline()` (a handful of cheap `memcpy`s) plus the now-fixed continuous
+audio feeding are running every frame, indefinitely, with no drop. This rules out the base HSTX/DMA video
+path and the audio path as standalone causes (already suspected from the audio fix above, now confirmed by
+a direct on/off test) and narrows the trigger to something that only runs while the game is active: CPU
+emulation (`i8080_step`/`invaders_machine_run_cycles`), the per-frame RST1/RST2 interrupt delivery, SNES
+controller PIO polling, or `render_arcade_row()`'s per-pixel VRAM sampling in `game.c` (as opposed to
+`testcard.c`'s simpler fixed-pattern fill) - any of which could be adding enough sustained Core 0 latency,
+or triggering some workload-dependent DMA/IRQ interaction, that the test card's much lighter, static
+workload never hits.
+
+Next diagnostic step: enable `DEBUG_CONTROLLER_TESTCARD` instead (still no CPU emulation/interrupts, but
+*does* poll `snes_controller_read()` every frame like the game does) to check whether SNES PIO polling
+specifically is implicated, independent of CPU emulation. If that also survives indefinitely, the trigger
+narrows further to `i8080_step`/interrupt delivery/`render_arcade_row()` specifically - i.e., something
+about running the actual emulated CPU, not just polling input. Beyond that: Core 1's own ISR timing budget
+under sustained operation (does it only degrade after some duration, suggesting drift/leak rather than a
+one-shot overrun?), whether the failure correlates with wall-clock uptime or frame count once the game is
+running, and factors external to this codebase (HDMI sink behavior/EDID re-negotiation, cable quality,
+thermal effects on the RP2350's clock/PLL) remain possible but are now lower-priority than the game-path
+theory above. If you touch the audio queue, HSTX timing path, or Core 1's ISR, treat sustained HDMI
+sync-loss as a still-open bug and validate on hardware before claiming any related change fixes it - this
+exact mistake (declaring it fixed based on the audio-churn theory alone) is why this caveat documents a
+superseded hypothesis instead of a closed issue.
 
 ## Build
 
