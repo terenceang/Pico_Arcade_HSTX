@@ -18,6 +18,28 @@
 // Video.md). Used to convert seconds into frame counts.
 #define DISPLAY_REFRESH_HZ 60
 
+// Minimum wall-clock time (microseconds) main.c's per-scanline loop spends
+// on each row, padding out with a short sleep if the real work (CPU
+// emulation + rendering + audio feed) finished early - see CLAUDE.md's
+// "HSTX sync-loss caveat". Attempt at removing the sync-loss trigger at its
+// source rather than reducing its odds (PICO_HDMI_LINE_BUFFER_IN_SCRATCH_Y
+// in CMakeLists.txt): the isolation tests there found the bug needs real,
+// varying ROM content specifically, not just CPU emulation running - a NOP
+// loop (perfectly uniform per-row timing, since every i8080_step() call is
+// identical) never reproduced it, while real ROM (variable timing - real
+// opcodes cost different cycles and take different code paths) did. Pacing
+// every row to the same fixed duration regardless of how much actual
+// emulation work it needed makes Core 0's per-scanline bus-access rhythm
+// uniform again even when running real code, without touching the CPU
+// interpreter itself. Real per-row work currently averages ~29us (240 rows
+// in ~7ms) - this leaves real headroom above that average for the heaviest
+// rows while still leaving slack in the 16.67ms frame budget for audio
+// feeding; tune upward if per-row work sometimes exceeds it (padding only
+// ever waits, so a too-low value just does nothing, it can't overrun).
+#ifndef SI_ROW_PACE_US
+#define SI_ROW_PACE_US 45
+#endif
+
 // Debug test card: at boot, main.c shows the colour-bar/grayscale test
 // pattern (testcard.c). Set to 0 to show permanently, or N > 0 to show for N
 // seconds before handing off to the game. Set DEBUG_TESTCARD 0 to disable.

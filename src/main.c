@@ -83,6 +83,8 @@ int main() {
 #endif
         uint8_t *frame_buf = dvi_display_get_write_buffer();
         for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
+            absolute_time_t row_start = get_absolute_time();
+
             // Keep the HDMI audio Data Island queue continuously topped up
             // across the frame rather than front-loading it once per frame -
             // consumption is ~200 packets/frame (48kHz / 4 samples per
@@ -98,10 +100,17 @@ int main() {
 #if DEBUG_TESTCARD
             if (show_testcard) {
                 testcard_render_scanline(dst, y, frame_count);
-                continue;
-            }
+            } else
 #endif
-            game_render_scanline(dst, y, frame_count);
+            {
+                game_render_scanline(dst, y, frame_count);
+            }
+
+            // Pad every row to the same fixed duration - see
+            // display_config.h's SI_ROW_PACE_US for why (removing the
+            // sync-loss trigger's irregular Core 0 timing at its source,
+            // rather than reducing its odds).
+            sleep_until(delayed_by_us(row_start, SI_ROW_PACE_US));
         }
 
 #if DEBUG_HDMI_STATUS_OVERLAY

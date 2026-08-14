@@ -221,17 +221,28 @@ enables it (set in the top-level `CMakeLists.txt`, before `add_subdirectory(lib/
 removing a source of Core 0/Core 1 bus contention rather than reacting to its symptom. Also tried moving
 `dvi_display.c`'s own `palette_packed[256]` (read on every pixel by the ISR) into the same scratch bank, but
 scratch Y is genuinely tiny - it also holds Core 1's own stack by default - and the linker overflowed by 256
-bytes with both in it; `palette_packed[]` was left in regular SRAM. **Not yet soak-tested on hardware as of
-this note** - the next thing to check is whether this measurably reduces or eliminates the failure, and if
-it helps but doesn't fully fix it, whether there's room to also relocate other Core-1-hot data.
+bytes with both in it; `palette_packed[]` was left in regular SRAM. **Soak-tested on hardware: helps, but
+does not fully eliminate the failure** - noticeably fewer drop-outs, but some still occur.
 
-If it turns out the scratch-Y relocation doesn't fully solve this: the fundamental difficulty is that Core 0
-running real, interpreted machine code inherently produces irregular, data-dependent timing - that's not
-something to "fix" by making the emulator's instruction dispatch artificially uniform (defeats the point of
-an interpreter). The remaining lever is architectural: reduce how much of Core 1's time-critical path can
-ever be disturbed by Core 0's bus activity at all, of which scratch-RAM relocation is one instance. Whether
-that's fully achievable without deeper hardware-level tracing (a scope/logic analyzer on the actual HSTX
-signals, which isn't available in this environment) is genuinely unknown.
+**Second prevention attempt: per-scanline pacing (`SI_ROW_PACE_US` in `display_config.h`, wired into
+`main.c`'s per-scanline loop).** Rather than only reducing *where* Core 0 and Core 1 contend for memory
+(scratch-Y relocation), this attacks the *timing* side directly: pads every scanline's processing (CPU
+emulation + rendering + audio feed) out to the same fixed wall-clock duration via `sleep_until()`, regardless
+of how much real emulation work that row actually needed. This directly targets narrowing #9's finding -
+real ROM produces *irregular* per-row timing (different opcodes cost different cycles, take different code
+paths) while a NOP loop's timing is perfectly uniform and never reproduced the bug - by making Core 0's
+per-scanline rhythm uniform again even when running real code, without touching the CPU interpreter itself.
+The padding never truncates real work (a row that legitimately needs longer than `SI_ROW_PACE_US` just takes
+that long; `sleep_until()` on an already-past deadline is a no-op), so this can only add latency, never lose
+emulation cycles. Not yet soak-tested on hardware as of this note - if it doesn't help, that would suggest
+the trigger isn't really about per-row timing regularity, and the "discrete jump" observation (narrowing #9)
+deserves more scrutiny than the timing-irregularity theory has been given credit for so far.
+
+If neither of these fully solves this: the remaining lever is architectural - reduce how much of Core 1's
+time-critical path can ever be disturbed by Core 0's bus/timing activity at all, of which scratch-RAM
+relocation and row pacing are two instances. Whether that's fully achievable without deeper hardware-level
+tracing (a scope/logic analyzer on the actual HSTX signals, which isn't available in this environment) is
+genuinely unknown.
 
 The SNES controller subsystem remains removed (it was never the cause, but cutting it isn't costing
 anything either) - see "Add a replacement input method" in `README.md`'s Roadmap if you want controls back.
