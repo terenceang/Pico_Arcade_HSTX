@@ -25,6 +25,7 @@
 
 static uint8_t *display_fb = NULL;
 static uint16_t palette_rgb565[256];
+static uint32_t palette_packed[256];
 
 // Pre-converted RGB565 lines, one per logical framebuffer row, each holding
 // MODE_H_ACTIVE_PIXELS/2 = 320 packed words (640 physical pixels, already
@@ -41,12 +42,21 @@ static uint32_t rgb565_lines[FRAME_HEIGHT][FRAME_WIDTH];
 void dvi_display_convert_frame(void) {
     if (!display_fb)
         return;
+
+    const uint32_t *pal = palette_packed;
     for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
         const uint8_t *src = &display_fb[y * FRAME_WIDTH];
         uint32_t *dst = rgb565_lines[y];
-        for (unsigned i = 0; i < FRAME_WIDTH; ++i) {
-            uint32_t color = palette_rgb565[src[i]];
-            dst[i] = color | (color << 16);
+
+        unsigned i = 0;
+        for (; i + 3 < FRAME_WIDTH; i += 4) {
+            dst[i + 0] = pal[src[i + 0]];
+            dst[i + 1] = pal[src[i + 1]];
+            dst[i + 2] = pal[src[i + 2]];
+            dst[i + 3] = pal[src[i + 3]];
+        }
+        for (; i < FRAME_WIDTH; ++i) {
+            dst[i] = pal[src[i]];
         }
     }
 }
@@ -68,7 +78,9 @@ void dvi_display_set_palette(uint8_t index, uint32_t rgb888) {
     uint16_t r5 = (rgb888 >> 19) & 0x1F;
     uint16_t g6 = (rgb888 >> 10) & 0x3F;
     uint16_t b5 = (rgb888 >> 3) & 0x1F;
-    palette_rgb565[index] = (r5 << 11) | (g6 << 5) | b5;
+    uint16_t color16 = (r5 << 11) | (g6 << 5) | b5;
+    palette_rgb565[index] = color16;
+    palette_packed[index] = (uint32_t)color16 | ((uint32_t)color16 << 16);
 }
 
 void dvi_display_set_buffer(uint8_t *buffer) {

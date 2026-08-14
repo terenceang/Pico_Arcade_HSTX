@@ -21,11 +21,11 @@
 #define AUDIO_SAMPLE_RATE 48000
 #define AUDIO_FRAMES_PER_VIDEO_FRAME (AUDIO_SAMPLE_RATE / DISPLAY_REFRESH_HZ)
 
-// Default HDMI audio queue fill target for audio_i2s_feed_queue() - well
-// under the pico_hdmi ring buffer's 256-entry capacity (DI_RING_BUFFER_SIZE
-// in hstx_data_island_queue.c), matching pico_hdmi's own bouncing_box
-// reference example's cadence.
-#define AUDIO_QUEUE_TARGET_LEVEL 200
+// Default HDMI audio queue fill target for audio_i2s_feed_queue(). Keep this
+// low enough that a late Core 0 frame does not trigger a sustained queue-
+// churn loop; the queue is only a short-lived buffer for the HSTX scheduler,
+// not a large application message queue.
+#define AUDIO_QUEUE_TARGET_LEVEL 32
 
 // Resets the software mixer's voice state. Call once, before the main
 // loop starts calling audio_i2s_step_frame().

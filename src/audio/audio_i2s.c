@@ -38,6 +38,10 @@ static int audio_frame_counter = 0;
 // be. Nearest-sample only (no interpolation) - acceptable for short 8-bit-
 // era arcade effects.
 static inline int16_t voice_advance(audio_voice_t *v, bool loop) {
+    if (!v->data || v->len == 0) {
+        v->active = false;
+        return 0;
+    }
     int16_t sample = v->data[v->pos];
     v->frac += SOUND_SAMPLE_RATE_HZ;
     while (v->frac >= AUDIO_SAMPLE_RATE) {
@@ -61,7 +65,7 @@ static int16_t debug_tone_lut[DEBUG_TONE_LUT_LEN];
 static audio_voice_t debug_voice;
 #endif
 
-static void mix_one_sample(int16_t *out_mono) {
+static inline void mix_one_sample(int16_t *out_mono) {
     int32_t mix = 0;
 
     if (loop_voice.active) {
@@ -90,14 +94,20 @@ static void mix_one_sample(int16_t *out_mono) {
     *out_mono = (int16_t)mix;
 }
 
-// Mixes and pushes 4-sample Data Island packets until the HDMI audio queue
-// reaches target_level, instead of generating a whole video frame's worth
-// in one burst - mirrors pico_hdmi's own bouncing_box reference example,
-// which keeps the queue continuously topped up rather than front-loading
-// it once per frame. Call this often (e.g. periodically while rendering a
-// frame's scanlines), not just once per frame.
+// Mixes and pushes a bounded number of 4-sample Data Island packets so the
+// queue is kept healthy without entering a pathological high-rate churn loop
+// when Core 0 is late. This is intentionally capped: a queue that is already
+// healthy should not be repeatedly re-filled by a large while-loop each frame.
 void audio_i2s_feed_queue(uint32_t target_level) {
-    while (hstx_di_queue_get_level() < target_level) {
+    uint32_t level = hstx_di_queue_get_level();
+    if (level >= target_level)
+        return;
+
+    uint32_t budget = target_level - level;
+    if (budget > 16)
+        budget = 16;
+
+    for (uint32_t i = 0; i < budget; ++i) {
         audio_sample_t samples[4];
         for (int c = 0; c < 4; c++) {
             int16_t sample16;
@@ -106,14 +116,14 @@ void audio_i2s_feed_queue(uint32_t target_level) {
             samples[c].right = sample16;
         }
         hstx_packet_t packet;
-        // Matches pico_hdmi's own bouncing_box reference example exactly
-        // (explicit IEC 60958 channel status, sample-rate-aware).
         audio_frame_counter = hstx_packet_set_audio_samples_cs_rate(
             &packet, samples, 4, audio_frame_counter, AUDIO_SAMPLE_RATE
         );
         hstx_data_island_t island;
         hstx_encode_data_island(&island, &packet, false, DI_HSYNC_ACTIVE);
-        hstx_di_queue_push(&island);
+        if (!hstx_di_queue_push(&island)) {
+            break;
+        }
     }
 }
 

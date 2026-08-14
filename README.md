@@ -14,6 +14,14 @@ A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 C
 - Embedded 48 kHz stereo PCM HDMI Data Island audio transport, driven without external I2S hardware directly over HDMI.
 - A debug test card (color bars, grayscale ramp, moving sync bar) for verifying the display pipeline independent of any game code.
 
+## Timing / HDMI stability note
+
+This project has one hardware-level caveat worth preserving in the repo: the HDMI signal can lose lock only when Core 0 stays chronically late while the audio producer keeps re-filling the HSTX Data Island queue at high rate. In the reproduced failure, Core 0 stayed alive the whole time, but Core 1's scan clock jumped from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stayed there. Serial-state inspection showed the scanline counters and DMA line lengths were still normal, so the failure is not in the emulator or in the simple framebuffer conversion path itself; it is in the vendor HSTX/Data Island timing path under sustained queue churn.
+
+This means the practical rule for future changes is: do not let Core 0 run behind on frame work while continuing a large queue-fill loop. The current mitigation is to keep the audio queue topped up in a bounded, low-target way rather than an unbounded fill loop, and to keep Core 0 render work under the frame budget. The render path is still the dominant source of latency in this project, so any change that causes sustained backlog should be treated as a potential sync-loss trigger.
+
+This is not a sign that the emulator core is failing; it is a HSTX timing guardrail issue in the HDMI audio/video pipeline and should be debugged with real hardware timing tools if it reappears.
+
 ## Hardware
 
 - Raspberry Pi Pico 2 board

@@ -64,6 +64,52 @@
 static invaders_machine_t s_machine;
 static bool s_mid_screen_fired;
 
+static inline uint8_t lit_pixel_color(unsigned ox, unsigned active_width);
+
+#if SI_DISPLAY_ROTATION == 0 || SI_DISPLAY_ROTATION == 180
+static int s_clip_start;
+static int s_clip_end;
+static uint8_t s_row_byte_index[FRAME_WIDTH];
+static uint8_t s_row_bit_mask[FRAME_WIDTH];
+#if SI_ENABLE_COLOR_OVERLAY
+static uint8_t s_row_lit_color[FRAME_WIDTH];
+#endif
+
+static void init_render_row_map(void) {
+    int start_x = SI_SCREEN_OFFSET_X + SI_ACTIVE_X_OFFSET;
+    int end_x = start_x + (int)SI_DISPLAY_W;
+
+    s_clip_start = start_x < 0 ? 0 : (start_x > FRAME_WIDTH ? FRAME_WIDTH : start_x);
+    s_clip_end = end_x < 0 ? 0 : (end_x > FRAME_WIDTH ? FRAME_WIDTH : end_x);
+
+    if (s_clip_start >= s_clip_end)
+        return;
+
+    uint32_t step_x = ((uint32_t)SI_CONTENT_W << 16) / SI_DISPLAY_W;
+    uint32_t ox_fp = (uint32_t)(s_clip_start - start_x) * step_x;
+
+    for (int x = s_clip_start; x < s_clip_end; ++x) {
+        unsigned ox = ox_fp >> 16;
+        ox_fp += step_x;
+
+#if SI_DISPLAY_ROTATION == 180
+        unsigned lx = (SI_ARCADE_WIDTH - 1) - ox;
+#else
+        unsigned lx = ox;
+#endif
+#if SI_DISPLAY_FLIP_H
+        lx = (SI_ARCADE_WIDTH - 1) - lx;
+#endif
+
+        s_row_byte_index[x] = (uint8_t)(lx >> 3);
+        s_row_bit_mask[x] = (uint8_t)(1u << (lx & 7));
+#if SI_ENABLE_COLOR_OVERLAY
+        s_row_lit_color[x] = lit_pixel_color(ox, SI_ARCADE_WIDTH);
+#endif
+    }
+}
+#endif
+
 static inline int sample_bit(const uint8_t *vram, unsigned lx, unsigned ly) {
     unsigned col = (SI_ARCADE_HEIGHT - 1) - ly;
     const uint8_t *column = vram + (size_t)col * 32;
@@ -101,7 +147,7 @@ static inline void apply_mirror(unsigned *lx, unsigned *ly) {
 
 #if SI_DISPLAY_ROTATION == 0 || SI_DISPLAY_ROTATION == 180
 
-static void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned ay) {
+static inline void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned ay) {
     int screen_y = (int)ay - SI_SCREEN_OFFSET_Y;
     if (screen_y < (int)SI_ACTIVE_Y_OFFSET || screen_y >= (int)(SI_ACTIVE_Y_OFFSET + SI_DISPLAY_H)) {
         memset(buf, COLOR_BLACK, FRAME_WIDTH * sizeof(uint8_t));
@@ -110,54 +156,38 @@ static void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned ay) {
     unsigned display_y = (unsigned)screen_y - SI_ACTIVE_Y_OFFSET;
     unsigned oy = (display_y * SI_CONTENT_H) / SI_DISPLAY_H;
 
-    int start_x = SI_SCREEN_OFFSET_X + SI_ACTIVE_X_OFFSET;
-    int end_x = start_x + (int)SI_DISPLAY_W;
-    int clip_start = start_x < 0 ? 0 : (start_x > FRAME_WIDTH ? FRAME_WIDTH : start_x);
-    int clip_end = end_x < 0 ? 0 : (end_x > FRAME_WIDTH ? FRAME_WIDTH : end_x);
+    if (s_clip_start > 0)
+        memset(buf, COLOR_BLACK, (size_t)s_clip_start * sizeof(uint8_t));
+    if (s_clip_end < FRAME_WIDTH)
+        memset(buf + s_clip_end, COLOR_BLACK, (size_t)(FRAME_WIDTH - s_clip_end) * sizeof(uint8_t));
 
-    if (clip_start > 0)
-        memset(buf, COLOR_BLACK, (size_t)clip_start * sizeof(uint8_t));
-    if (clip_end < FRAME_WIDTH)
-        memset(buf + clip_end, COLOR_BLACK, (size_t)(FRAME_WIDTH - clip_end) * sizeof(uint8_t));
-
-    if (clip_start >= clip_end)
+    if (s_clip_start >= s_clip_end)
         return;
-
-    uint32_t step_x = ((uint32_t)SI_CONTENT_W << 16) / SI_DISPLAY_W;
-    uint32_t ox_fp = (uint32_t)(clip_start - start_x) * step_x;
 
 #if SI_DISPLAY_ROTATION == 180
     unsigned ly = (SI_ARCADE_HEIGHT - 1) - oy;
 #else
     unsigned ly = oy;
 #endif
-    unsigned dummy_lx = 0, cur_ly = ly;
-    apply_mirror(&dummy_lx, &cur_ly);
-    unsigned col = (SI_ARCADE_HEIGHT - 1) - cur_ly;
+#if SI_DISPLAY_FLIP_V
+    ly = (SI_ARCADE_HEIGHT - 1) - ly;
+#endif
+    unsigned col = (SI_ARCADE_HEIGHT - 1) - ly;
     const uint8_t *column = vram + (size_t)col * 32;
 
-    for (int x = clip_start; x < clip_end; ++x) {
-        unsigned ox = ox_fp >> 16;
-        ox_fp += step_x;
-
-#if SI_DISPLAY_ROTATION == 180
-        unsigned lx = (SI_ARCADE_WIDTH - 1) - ox;
+    for (int x = s_clip_start; x < s_clip_end; ++x) {
+        int bit = (column[s_row_byte_index[x]] & s_row_bit_mask[x]) != 0;
+#if SI_ENABLE_COLOR_OVERLAY
+        buf[x] = bit ? s_row_lit_color[x] : COLOR_BLACK;
 #else
-        unsigned lx = ox;
+        buf[x] = bit ? COLOR_WHITE : COLOR_BLACK;
 #endif
-        unsigned cur_lx = lx;
-#if SI_DISPLAY_FLIP_H
-        cur_lx = (SI_ARCADE_WIDTH - 1) - cur_lx;
-#endif
-
-        int bit = (column[cur_lx >> 3] >> (cur_lx & 7)) & 1;
-        buf[x] = bit ? lit_pixel_color(ox, SI_ARCADE_WIDTH) : COLOR_BLACK;
     }
 }
 
 #else // SI_DISPLAY_ROTATION == 90 or 270
 
-static void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned ay) {
+static inline void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned ay) {
     int screen_ay = (int)ay - SI_SCREEN_OFFSET_Y;
     if (screen_ay < (int)SI_ACTIVE_Y_OFFSET || screen_ay >= (int)SI_ACTIVE_Y_LIMIT) {
         memset(buf, COLOR_BLACK, FRAME_WIDTH * sizeof(uint8_t));
@@ -207,6 +237,9 @@ void game_init(void) {
     s_machine.sound_write = sound_effects_on_port_write;
     s_mid_screen_fired = false;
     snes_controller_init();
+#if SI_DISPLAY_ROTATION == 0 || SI_DISPLAY_ROTATION == 180
+    init_render_row_map();
+#endif
 }
 
 void game_render_scanline(uint8_t *dst, unsigned y, unsigned frame_count) {

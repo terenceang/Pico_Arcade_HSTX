@@ -18,7 +18,7 @@ static inline void mem_write(void *ctx, uint16_t addr, uint8_t value) {
     m->ram[(addr - 0x2000) & 0x1FFF] = value;
 }
 
-static uint8_t io_in(void *ctx, uint8_t port) {
+static inline uint8_t io_in(void *ctx, uint8_t port) {
     invaders_machine_t *m = (invaders_machine_t *)ctx;
     switch (port) {
         case 0: return m->in0;
@@ -29,7 +29,7 @@ static uint8_t io_in(void *ctx, uint8_t port) {
     }
 }
 
-static void io_out(void *ctx, uint8_t port, uint8_t value) {
+static inline void io_out(void *ctx, uint8_t port, uint8_t value) {
     invaders_machine_t *m = (invaders_machine_t *)ctx;
     switch (port) {
         case 2: m->shift_offset = value & 0x07; break;

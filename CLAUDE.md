@@ -19,6 +19,21 @@ HDMI Data Islands by `pico_hdmi`) are built and working. See the Roadmap in `REA
 see `roms/README.md`). Without it in `roms/`, the build substitutes a zero-filled
 placeholder so compilation still succeeds, but the firmware won't run the actual game.
 
+## HSTX sync-loss caveat
+
+This project has reproduced a real hardware failure mode in the vendored HDMI HSTX/Data Island path:
+Core 0 stays alive and running, but under sustained audio-queue churn while the frame render falls behind,
+Core 1's scan clock snaps from 60 Hz to a fixed ~137.8 Hz (~2.3x) and never recovers. It is not a CPU crash,
+not a corrupted emulator state, and not a simple DMA-length corruption visible from a serial log. The failure
+precondition is: Core 0 remains chronically unable to keep the audio queue topped up while still calling the
+feed loop every frame; a steady empty queue from boot or a sudden real-to-silence transition alone does not
+trigger it, but sustained high-rate churn under backlog does.
+
+The practical mitigation path is to reduce Core 0 render latency and keep queue refills bounded rather than
+unbounded. This project has already demonstrated that large render_us values are what make the trigger condition
+possible in the first place. If you touch the audio queue or HSTX timing path, treat any sustained backlog as a
+potential HDMI sync-loss hazard and validate on hardware before claiming the fix is safe.
+
 ## Build
 
 Targets Pico SDK 2.3.0 and the `pico2` board definition (referenced via `PICO_BOARD` in `CMakeLists.txt`).

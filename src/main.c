@@ -48,7 +48,7 @@ int main() {
 #endif
 
     printf("[DEBUG] Pre-filling audio Data Island queue...\n");
-    audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
+    audio_i2s_feed_queue(8);
 
     dvi_display_set_buffer(fb);
 
@@ -71,7 +71,7 @@ int main() {
 #endif
 
     while (true) {
-        audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
+        audio_i2s_feed_queue(8);
         ++chunks_pushed;
 
 #if DEBUG_TESTCARD
@@ -90,12 +90,6 @@ int main() {
         }
 #endif
         for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
-            if ((y & 63) == 0) {
-                // Keep the HDMI audio queue continuously topped up across
-                // the frame instead of front-loading it once per frame -
-                // matches pico_hdmi's own bouncing_box reference example.
-                audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
-            }
             uint8_t *dst = fb + y * FRAME_WIDTH;
 #if DEBUG_TESTCARD
             if (show_testcard) {
@@ -115,7 +109,8 @@ int main() {
         // pointer, with no per-pixel palette lookups on that critical path.
         dvi_display_convert_frame();
 
-        sleep_until(delayed_by_us(start, chunks_pushed * CHUNK_US));
+        uint64_t target_us = (chunks_pushed * 1000000ull) / DISPLAY_REFRESH_HZ;
+        sleep_until(delayed_by_us(start, target_us));
 
         ++frame_count;
     }
