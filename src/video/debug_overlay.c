@@ -2,9 +2,9 @@
 #include "display_config.h"
 
 // Minimal 3-wide x 5-tall bitmap font, digits 0-9 only - there's no general
-// font renderer in this codebase (see testcard.c/controller_testcard.c's
-// same block-graphics approach). Each row's 3 low bits select which of the
-// 3 columns are lit, MSB = leftmost column.
+// font renderer in this codebase (see testcard.c's same block-graphics
+// approach). Each row's 3 low bits select which of the 3 columns are lit,
+// MSB = leftmost column.
 static const uint8_t digit_font[10][5] = {
     {0x7, 0x5, 0x5, 0x5, 0x7}, // 0
     {0x2, 0x6, 0x2, 0x2, 0x7}, // 1

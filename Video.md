@@ -46,7 +46,14 @@ sleep_until(delayed_by_us(start, target_us))
 - `dvi_scanline_fill_cb()` (a *scanline fill* callback, matching `pico_hdmi`'s own reference example - `examples/bouncing_box`) does the 8bpp->RGB565 palette lookup and horizontal-doubling itself, per line, directly into the ISR's own line buffer - reading from whichever `fb_buffers[]` entry Core 0 published via `dvi_display_present_frame()`. An earlier per-pixel-lookup-in-the-ISR design (a *different* problem than the data race above) had blown HDMI mode's per-line timing budget at native 640-pixel width; the current 320-pixel-wide lookup (doubled via packing, not re-fetching) is the design that replaced it - see display_config.h's FRAME_WIDTH/HEIGHT comment.
 - Hardware TMDS encoding via RP2350 HSTX peripheral.
 - Injects HDMI Data Island packets (Audio samples, InfoFrames, ACR) during horizontal sync/blanking periods.
-- `dvi_display.c` also registers a background task (`hdmi_sync_watchdog_task()`, via `video_output_set_background_task()`) that runs on Core 1's own idle loop, monitoring for a known `pico_hdmi` failure mode (a corrupted HSTX command word desyncing the DMA engine permanently) and calling `video_output_force_resync()` to recover automatically - see `CLAUDE.md`'s "HSTX sync-loss caveat".
+
+**Known issue**: an intermittent HDMI sync-loss bug still reproduces under real gameplay (a corrupted HSTX
+command word desyncing the DMA engine, per `pico_hdmi`'s own documented failure mode). This project
+deliberately does not run any resync/reboot recovery logic - an earlier attempt at one was removed, since
+detecting and reacting to the desync doesn't address why it happens. The current mitigation attempt is
+`PICO_HDMI_LINE_BUFFER_IN_SCRATCH_Y` (`CMakeLists.txt`), relocating `pico_hdmi`'s active-line buffer away
+from Core 0's working set to reduce bus contention. See `CLAUDE.md`'s "HSTX sync-loss caveat" for the full
+investigation and current status.
 
 ---
 
