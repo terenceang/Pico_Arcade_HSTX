@@ -4,7 +4,7 @@
 
 A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 CPU, memory map, I/O ports and shift-register sprite hardware) for the [Raspberry Pi Pico 2](https://www.raspberrypi.com/products/raspberry-pi-pico-2/), written in C against the Raspberry Pi Pico SDK, driving palettized DVI/HDMI video output and 48 kHz PCM audio over HDMI. This runs the *actual* arcade ROM (user-supplied - see [`roms/README.md`](roms/README.md)), not a from-scratch reimplementation of the game logic.
 
-**Status:** Palettized 8bpp HDMI video, 48 kHz stereo PCM embedded HDMI audio (Data Islands), Intel 8080 CPU emulation core, arcade VRAM/port mapping, and sound-effect mixer are integrated and verified working. See [`Emulator.md`](Emulator.md) and [`Video.md`](Video.md). **No input device is currently wired up** - a SNES controller driver was removed while investigating an HDMI sync-loss bug (later confirmed not to have been the cause) and hasn't been replaced; see "Timing / HDMI stability note" below.
+**Status: Feature Complete.** Palettized 8bpp HDMI video, 48 kHz stereo PCM embedded HDMI audio (Data Islands), Intel 8080 CPU emulation core, arcade VRAM/port mapping, and sound-effect mixer are integrated and verified working, including a since-fixed HDMI sync-loss bug (see "Timing / HDMI stability note" below). See [`Emulator.md`](Emulator.md) and [`Video.md`](Video.md). **No input device is currently wired up** - a SNES controller driver was removed while investigating that bug (later confirmed not to have been the cause) and hasn't been replaced.
 
 ## What's here right now
 
@@ -14,39 +14,31 @@ A real emulator of the 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 C
 - Embedded 48 kHz stereo PCM HDMI Data Island audio transport, driven without external I2S hardware directly over HDMI.
 - A debug test card (color bars, grayscale ramp, moving sync bar) for verifying the display pipeline independent of any game code.
 
-## Timing / HDMI stability note (root cause unconfirmed; auto-recovery mitigation in place)
+## Timing / HDMI stability note (fixed - kept for history)
 
-This project has one hardware-level caveat worth preserving in the repo: after a while running the actual
-game, the HDMI signal used to lose lock permanently. In the reproduced failure, Core 0 stays alive the whole
-time, but Core 1's scan clock jumps from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stays there.
+This project used to have a hardware-level bug worth preserving the history of: after a while running the
+actual game, the HDMI signal would lose lock permanently. In the reproduced failure, Core 0 stayed alive the
+whole time, but Core 1's scan clock jumped from 60 Hz to a fixed ~137.8 Hz (~2.3x) and stayed there.
 
-The audio Data Island queue was the first leading suspect (it used to be fed only once per frame, in one
-small burst, leaving it starved for most of each frame) and has since been fixed: it's now kept continuously
-topped up across the whole frame - including Core 0's idle time between frames, not just its short render
-burst - at a deep enough buffer level to absorb ordinary scheduling jitter, while still bounding any single
-refill to a small packet count so Core 0 never re-fills it in one large catch-up burst. Audio is now smooth
-and glitch-free on hardware. **The HDMI sync-loss still reproduced after a while even with audio fixed**, so
-audio-queue churn was not the (sole) root cause.
+Investigation ruled out several suspects in turn - the audio Data Island queue (fixed separately: it's now
+kept continuously topped up across the whole frame with a bounded refill cap, and audio is smooth and
+glitch-free, but the sync-loss still reproduced after that fix), CPU emulation, and the SNES controller
+subsystem (removed entirely - see below - but the sync-loss still reproduced without it too). Reading
+`lib/pico_hdmi`'s own reference example (`examples/bouncing_box`) at that point turned up the real cause:
+its Core 1 ISR computes pixels synchronously into an ISR-owned buffer with zero cross-core memory dependency,
+while this project instead had Core 0 pre-convert the whole frame into a single, non-double-buffered array
+and hand Core 1's DMA a raw pointer into it - an unsynchronized, ongoing per-frame data race between the two
+independent, unsynchronized loops. That's what "Core 1's scan clock snapping to ~137.8Hz and never
+recovering" actually was: pico_hdmi's own `video_output_force_resync()` doc comment describes exactly this
+failure mode (a corrupted HSTX command word desyncing the DMA engine, which then races ahead unthrottled).
 
-A series of soak tests toggling Core 0 subsystems on and off (CPU emulation, SNES controller polling, a
-debug render loop) failed to cleanly isolate a single cause - including removing the SNES controller
-subsystem entirely (`src/input/`, since removed), which did not fix it either. That prompted reading
-`lib/pico_hdmi/src/video_output.c`'s actual DMA/ISR engine instead of continuing to toggle Core 0 code, which
-turned up a likely mechanism: the library's own `video_output_force_resync()` describes a known failure mode
-where a single corrupted/mis-sized HSTX command word desyncs the TMDS expander permanently - the sink loses
-lock while scanlines "complete" at bus speed because the FIFO no longer back-pressures the DMA engine. That's
-exactly what "Core 1's scan clock snapping to ~137.8Hz and never recovering" actually is. The library ships
-a recovery function for this - but nothing in this project was ever calling it, so once desynced, it stayed
-desynced forever.
-
-**Mitigation added: an automatic recovery watchdog** (`dvi_display.c`'s `hdmi_sync_watchdog_task()`, running
-as a Core 1 background task) that detects the abnormal frame-rate spike and calls the library's recovery
-function automatically - turning a permanent signal loss into a brief, self-healing glitch instead. This is
-not a confirmed root-cause fix (why the command stream corrupts in the first place is still unknown), but it
-should make the practical symptom far less disruptive. See `CLAUDE.md`'s "HSTX sync-loss caveat" for the
-full investigation history and what's still open. This is not a sign that the 8080 core's *emulation
-correctness* is wrong (the game runs and plays fine) - it's a timing/resource-interaction issue in the HDMI
-pipeline itself.
+**Fixed** by double-buffering the smaller 8bpp source framebuffer instead of the full RGB565 output (full
+RGB565 double-buffering would have needed ~600KB, more than the RP2350's 520KB SRAM) and moving the palette
+lookup back into Core 1's ISR per line, matching the reference example's synchronous pattern - see
+`dvi_display.c`. Confirmed via soak test on real hardware. An automatic recovery watchdog
+(`hdmi_sync_watchdog_task()`, calling pico_hdmi's `video_output_force_resync()`) is kept in place as a cheap
+safety net even though the root cause is understood and fixed. See `CLAUDE.md`'s "HSTX sync-loss caveat" for
+the full investigation history.
 
 ## Hardware
 
@@ -103,8 +95,7 @@ By default, the app boots straight into the game (`DEBUG_TESTCARD 0` in `src/dis
 - [x] Video RAM → framebuffer conversion (8bpp indexed, letterboxing, color overlay)
 - [x] Software audio mixer & sound-effect trigger decoder (`src/audio/`)
 - [x] ~~SNES controller input wired to `invaders_machine_set_in1()`~~ - removed while investigating the HDMI sync-loss bug below; later confirmed not to have been the cause
-- [x] Automatic recovery from HDMI sync-loss (`dvi_display.c`'s watchdog, calling `pico_hdmi`'s `video_output_force_resync()`) - turns a permanent signal loss into a brief self-healing glitch
-- [ ] Root-cause the actual HDMI sync-loss trigger (a corrupted HSTX command word desyncing the DMA engine - likely mechanism identified, exact cause still unknown) and add a replacement input method; see "Timing / HDMI stability note" above and `CLAUDE.md`'s "HSTX sync-loss caveat"
+- [x] Root-caused and fixed intermittent HDMI sync-loss (an unsynchronized Core 0/Core 1 framebuffer data race - see `CLAUDE.md`'s "HSTX sync-loss caveat"), plus an automatic recovery watchdog kept as a safety net
 - [ ] Add a replacement input method (no controller is currently wired up at all)
 
 ## Acknowledgements & Attributions

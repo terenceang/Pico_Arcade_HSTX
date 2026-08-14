@@ -12,17 +12,19 @@ reimplementation of the game logic - see `Emulator.md`. The HSTX HDMI
 video pipeline (`src/video/`, `lib/pico_hdmi`), the CPU core + video output
 (`src/emu/`, `src/game.c`), and sound-effect playback
 (`src/audio/`, driven by the emulated machine's own port 3/5 writes, embedded into
-HDMI Data Islands by `pico_hdmi`) are built and working. **No input device is currently
-wired up** - a SNES controller driver used to map to the emulated machine's
-coin/start/joystick/fire inputs (`invaders_machine_set_in1()`) but was removed after being
-implicated in the HDMI sync-loss investigation below; the game currently just idles on the
-attract screen. See the Roadmap in `README.md` and the "HSTX sync-loss caveat" below.
+HDMI Data Islands by `pico_hdmi`) are built and working, including a since-fixed HDMI
+sync-loss bug - see the "HSTX sync-loss caveat" below for the full investigation and root
+cause. **No input device is currently wired up** - a SNES controller driver used to map to
+the emulated machine's coin/start/joystick/fire inputs (`invaders_machine_set_in1()`) was
+removed while investigating that bug (it turned out not to be the cause) and hasn't been
+replaced; the game currently just idles on the attract screen. See the Roadmap in
+`README.md`.
 
 **The real arcade ROM is required and is not in this repo** (Taito's copyrighted work -
 see `roms/README.md`). Without it in `roms/`, the build substitutes a zero-filled
 placeholder so compilation still succeeds, but the firmware won't run the actual game.
 
-## HSTX sync-loss caveat (STATUS: root cause unconfirmed, auto-recovery mitigation added as of 2026-08-14)
+## HSTX sync-loss caveat (STATUS: fixed and soak-tested on hardware as of 2026-08-14 - kept for history/context)
 
 This project has reproduced a real hardware failure mode in the vendored HDMI HSTX/Data Island path:
 Core 0 stays alive and running, but after some period of normal operation, Core 1's scan clock snaps from
@@ -156,28 +158,37 @@ confirmed with certainty - the actual trigger for the corrupted command word its
 `dma_irq_handler()`'s own state machine, bus-arbitration starvation, or something else in the HSTX/DMA
 setup) is still unknown.
 
-**Mitigation implemented (not a root-cause fix): an automatic recovery watchdog.** `dvi_display.c`'s
-`hdmi_sync_watchdog_task()` runs as pico_hdmi's Core 1 background task (registered via
-`video_output_set_background_task()` in `core1_main()`) - self-contained on Core 1, since
-`video_output_force_resync()` is documented safe to call from Core 1 thread context specifically (it
-manipulates Core-1-owned DMA/HSTX state; calling it from Core 0 would not actually mask Core 1's own NVIC
-and would race). It compares `video_frame_count`'s actual advance against wall-clock time every ~0.5s and
-calls `video_output_force_resync()` if the rate is far above nominal 60Hz (threshold tuned well above normal
-jitter, well below the ~137.8Hz/2.3x desync rate - see the constants in `dvi_display.c`). `main.c` logs a
-`[WARN]` line whenever `dvi_display_get_hdmi_resync_count()` increases, so recoveries are visible on the
-serial console. This turns a permanent, unrecoverable signal loss into a brief, self-healing glitch (at most
-~0.5-1s of visibly wrong output) instead - a real improvement even without knowing the root cause, but not
-a substitute for finding and fixing whatever actually corrupts the command stream. Validate on hardware:
-confirm the watchdog actually fires and recovers when the failure reproduces, and that it doesn't
-false-trigger during ordinary operation.
+**Mitigation implemented: an automatic recovery watchdog.** `dvi_display.c`'s `hdmi_sync_watchdog_task()`
+runs as pico_hdmi's Core 1 background task (registered via `video_output_set_background_task()` in
+`core1_main()`) - self-contained on Core 1, since `video_output_force_resync()` is documented safe to call
+from Core 1 thread context specifically (it manipulates Core-1-owned DMA/HSTX state; calling it from Core 0
+would not actually mask Core 1's own NVIC and would race). It compares `video_frame_count`'s actual advance
+against wall-clock time every ~0.5s and calls `video_output_force_resync()` if the rate is far above nominal
+60Hz (threshold tuned well above normal jitter, well below the ~137.8Hz/2.3x desync rate - see the constants
+in `dvi_display.c`). `main.c` logs a `[WARN]` line whenever `dvi_display_get_hdmi_resync_count()` increases.
 
-If this mitigation turns out insufficient, or you want to pursue the actual root cause: instrument
-`dma_irq_handler()` itself (e.g., a cheap counter/timestamp at entry, checked from Core 0) to see whether its
-own execution time occasionally spikes right before a desync; consider whether `scanline_pointer_callback()`
-being called synchronously inside the highest-priority ISR is inherently fragile under Core 0 bus contention
-regardless of what Core 0 is doing; and whether the failure correlates with wall-clock uptime/frame count
-rather than any specific workload. The SNES controller subsystem remains removed (see the commit that added
-this note) since it's still one less variable, even though it's now confirmed not to have been the cause.
+**Actual root cause found and fixed: an unsynchronized Core 0/Core 1 framebuffer data race.** Reading
+`lib/pico_hdmi`'s own reference example (`examples/bouncing_box`) showed it computes pixels synchronously
+inside Core 1's ISR, into a buffer Core 1 alone owns - no cross-core memory dependency at all. This project
+instead had Core 0 pre-convert the whole frame to RGB565 into a single, non-double-buffered array
+(`rgb565_lines[]`) and hand Core 1's DMA a raw pointer into it, with no synchronization and no phase-lock
+between the two independent loops - a genuine, ongoing per-frame race, not a rare fluke, which explains why
+the resync watchdog alone didn't produce a clean recovery (it restarts the DMA/HSTX state machine but
+doesn't stop the race from corrupting things again a frame or two later). Fixed by double-buffering the
+smaller 8bpp source instead (`fb_buffers[2]` in `dvi_display.c`, ~154KB total - full RGB565 double-buffering
+would have needed ~600KB, more than the RP2350's 520KB SRAM) and moving the palette lookup back into Core
+1's ISR per line (`dvi_scanline_fill_cb()`, matching the reference example's synchronous fill-callback
+pattern) instead of handing out a pointer into shared memory. **Confirmed fixed via soak test on real
+hardware** (with the resync watchdog, `DEBUG_AUDIO_TEST_TONE`'s continuous tone, and the real game all
+running together) - the sync-loss no longer reproduces.
+
+The resync watchdog is kept in place as a safety net even though the root cause is now understood and fixed
+- it's cheap, and pico_hdmi's own documented failure mode (a corrupted HSTX command word desyncing the DMA
+engine) could in principle still occur for some other reason. The SNES controller subsystem remains removed
+(it was never the cause, but cutting it isn't costing anything either) - see "Add a replacement input
+method" in `README.md`'s Roadmap if you want controls back. If HDMI stability regresses again after future
+changes, re-read this section before assuming it's a new bug - check first whether something reintroduced a
+cross-core shared-buffer access without double buffering, since that's the actual pattern that caused this.
 
 ## Build
 
