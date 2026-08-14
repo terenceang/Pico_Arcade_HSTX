@@ -28,17 +28,6 @@
 #define DEBUG_TESTCARD_SECONDS 0
 #endif
 
-// Debug controller test card: shows a live SNES-controller button diagram
-// (controller_testcard.c) instead of the game - each button lights up green
-// while held, for checking wiring/mapping without a serial console. Shown
-// permanently while enabled (no timeout, unlike DEBUG_TESTCARD above) since
-// bring-up testing needs time to press every button. Set to 0 to go
-// straight into the game. Takes a back seat to DEBUG_TESTCARD above if both
-// are enabled - the colour-bar card shows first, then this.
-#ifndef DEBUG_CONTROLLER_TESTCARD
-#define DEBUG_CONTROLLER_TESTCARD 0
-#endif
-
 // Debug audio test tone: set to 1 to play a continuous 1kHz tone, 0 to
 // disable. With DEBUG_TESTCARD also on, the tone accompanies the test card
 // and stops once the game takes over. With DEBUG_TESTCARD off (as here),
@@ -48,19 +37,6 @@
 // sound-effect logic.
 #ifndef DEBUG_AUDIO_TEST_TONE
 #define DEBUG_AUDIO_TEST_TONE 0
-#endif
-
-// Debug: skip polling the SNES controller every frame - the game still
-// runs completely normally (real ROM, real CPU emulation, real rendering),
-// it just always sees "no buttons pressed" (game_render_scanline() in
-// game.c never calls snes_controller_read()). Diagnostic only, for
-// isolating whether draining the SNES PIO RX FIFO is implicated in the
-// HDMI sync-loss bug (see CLAUDE.md's "HSTX sync-loss caveat") independent
-// of CPU emulation - snes_controller_init() itself still runs regardless
-// (from game_init()), only the per-frame read is skipped. Set to 0 for
-// normal play.
-#ifndef DEBUG_SKIP_CONTROLLER_POLL
-#define DEBUG_SKIP_CONTROLLER_POLL 0
 #endif
 
 // Debug: force the emulated CPU's ROM region to read back as all-NOP

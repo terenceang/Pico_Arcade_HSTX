@@ -11,9 +11,6 @@
 #if DEBUG_TESTCARD
 #include "testcard.h"
 #endif
-#if DEBUG_CONTROLLER_TESTCARD
-#include "controller_testcard.h"
-#endif
 
 static uint8_t fb[FRAME_WIDTH * FRAME_HEIGHT];
 
@@ -32,10 +29,6 @@ int main() {
     testcard_init();
     printf("[DEBUG] DEBUG_TESTCARD enabled: test card for %d seconds, then the game.\n",
            DEBUG_TESTCARD_SECONDS);
-#endif
-#if DEBUG_CONTROLLER_TESTCARD
-    controller_testcard_init();
-    printf("[DEBUG] DEBUG_CONTROLLER_TESTCARD enabled: showing controller test card instead of the game.\n");
 #endif
     game_init();
 
@@ -76,7 +69,7 @@ int main() {
 #if DEBUG_AUDIO_TEST_TONE && DEBUG_TESTCARD
         // Tone only accompanies the colour-bar test card's audio/video sanity
         // check - stop it as soon as that card isn't what's showing, so it
-        // doesn't keep playing under the controller test card or the game.
+        // doesn't keep playing under the game.
         // (With DEBUG_TESTCARD off, there's no card to accompany - the tone
         // just plays continuously the whole time, e.g. for verifying the
         // HDMI audio queue stays glitch-free under real gameplay.)
@@ -105,11 +98,7 @@ int main() {
                 continue;
             }
 #endif
-#if DEBUG_CONTROLLER_TESTCARD
-            controller_testcard_render_scanline(dst, y, frame_count);
-#else
             game_render_scanline(dst, y, frame_count);
-#endif
         }
 
         // Convert the freshly-rendered 8bpp frame to pre-packed RGB565 on

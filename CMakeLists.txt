@@ -78,13 +78,11 @@ add_executable(Space_Invader_PICO
         src/main.c
         src/video/dvi_display.c
         src/video/testcard.c
-        src/video/controller_testcard.c
         src/game.c
         src/audio/audio_i2s.c
         src/audio/sound_effects.c
         src/emu/i8080.c
         src/emu/invaders_machine.c
-        src/input/snes_controller.c
         ${SI_ROM_GEN}
         ${SI_SOUND_GEN}
 )
@@ -108,8 +106,6 @@ target_link_libraries(Space_Invader_PICO
         hardware_clocks
         hardware_vreg
         hardware_dma
-        hardware_pio
-        hardware_pwm
         pico_hdmi
 )
 
@@ -118,14 +114,11 @@ target_include_directories(Space_Invader_PICO PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/src/video
         ${CMAKE_CURRENT_LIST_DIR}/src/audio
         ${CMAKE_CURRENT_LIST_DIR}/src/emu
-        ${CMAKE_CURRENT_LIST_DIR}/src/input
 )
 
 target_compile_definitions(Space_Invader_PICO PRIVATE
         SPACE_INVADER_PICO_VERSION="${PROJECT_VERSION}"
 )
-
-pico_generate_pio_header(Space_Invader_PICO ${CMAKE_CURRENT_LIST_DIR}/src/input/snes_controller.pio)
 
 pico_add_extra_outputs(Space_Invader_PICO)
 

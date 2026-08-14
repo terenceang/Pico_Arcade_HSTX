@@ -6,7 +6,6 @@
 #include "display_config.h"
 #include "invaders_machine.h"
 #include "sound_effects.h"
-#include "snes_controller.h"
 
 // ============================================================================
 // Space Invaders arcade emulator: video output.
@@ -236,7 +235,6 @@ void game_init(void) {
     invaders_machine_init(&s_machine);
     s_machine.sound_write = sound_effects_on_port_write;
     s_mid_screen_fired = false;
-    snes_controller_init();
 #if SI_DISPLAY_ROTATION == 0 || SI_DISPLAY_ROTATION == 180
     init_render_row_map();
 #endif
@@ -246,20 +244,12 @@ void game_render_scanline(uint8_t *dst, unsigned y, unsigned frame_count) {
     (void)frame_count;
 
     if (y == 0) {
-#if DEBUG_SKIP_CONTROLLER_POLL
-        // Diagnostic: skip draining the SNES PIO RX FIFO entirely (see
-        // display_config.h) - the game proceeds as if no buttons are ever
-        // pressed, everything else runs normally.
-        uint16_t btns = 0;
-#else
-        uint16_t btns = snes_controller_read();
-#endif
-        invaders_machine_set_in1(&s_machine, SI_IN1_COIN,     (btns & SNES_BTN_SELECT) != 0);
-        invaders_machine_set_in1(&s_machine, SI_IN1_P1_START, (btns & SNES_BTN_START)  != 0);
-        invaders_machine_set_in1(&s_machine, SI_IN1_P1_LEFT,  (btns & SNES_BTN_LEFT)   != 0);
-        invaders_machine_set_in1(&s_machine, SI_IN1_P1_RIGHT, (btns & SNES_BTN_RIGHT)  != 0);
-        invaders_machine_set_in1(&s_machine, SI_IN1_P1_FIRE,  (btns & (SNES_BTN_A | SNES_BTN_B | SNES_BTN_Y | SNES_BTN_X)) != 0);
-
+        // No input device is currently wired up (see CLAUDE.md's "HSTX
+        // sync-loss caveat" - the SNES controller driver that used to set
+        // these was removed after being implicated in that investigation).
+        // invaders_machine_set_in1() is still there for whatever replaces
+        // it; until then, the machine's coin/start/fire/left/right bits
+        // just stay at their power-on idle state from invaders_machine_init().
         invaders_machine_interrupt_vblank(&s_machine);
         s_mid_screen_fired = false;
     }

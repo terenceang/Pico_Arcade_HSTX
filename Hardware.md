@@ -28,17 +28,12 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 
 ---
 
-## SNES Controller Pin Mapping
+## Input
 
-`src/input/snes_controller.c` reads a standard SNES controller via a PIO state machine (`src/input/snes_controller.pio`):
-
-| Signal | GPIO | 40-pin header position | Description |
-| :--- | :--- | :--- | :--- |
-| **LATCH** | **GPIO 2** | Physical pin 4 | Latch pulse output (12 µs pulse) |
-| **CLOCK** | **GPIO 3** | Physical pin 5 | Shift clock output (500 kHz) |
-| **DATA** | **GPIO 4** | Physical pin 6 | Serial data input (internal pull-up enabled) |
-| **VCC** | **3.3V / 5V** | Physical pin 36 or 39 | Controller power supply |
-| **GND** | **GND** | Physical pin 3, 8, 13, 18, 23, 28, 33, or 38 | Common ground |
+No input device is currently wired up. A SNES controller driver used to read a controller
+via a PIO state machine on GPIO 2/3/4, but was removed after being implicated in an
+unresolved HDMI sync-loss investigation - see `CLAUDE.md`'s "HSTX sync-loss caveat". The
+game currently just idles on the attract screen.
 
 ---
 
@@ -60,7 +55,7 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 ### Dual-Core & Hardware Allocation
 * **Core 0**:
   * Initializes system clock (126 MHz), voltage regulator (1.10V), and stdio (USB CDC only - UART is disabled, see CMakeLists.txt).
-  * Executes Intel 8080 CPU emulation & SNES controller input decoding.
+  * Executes Intel 8080 CPU emulation.
   * Renders 8bpp scanlines directly into `fb` (`game_render_scanline()`).
   * Converts the whole 8bpp frame to pre-packed RGB565 once per frame
     (`dvi_display_convert_frame()`) - deliberately kept off Core 1's ISR,
@@ -80,9 +75,8 @@ The DVI/HDMI video engine utilizes the RP2350's hardware **HSTX peripheral** and
 
 ### Hardware Peripherals Used
 * **HSTX**: Drives DVI TMDS differential clock and data signals over GPIO 12-19 using hardware encoders.
-* **PIO**: Runs the SNES controller driver state machine (`src/input/snes_controller.pio`).
 * **DMA**: Transfers scanline buffers to HSTX FIFO and injects Data Island packets.
-* **USB CDC + UART**: Stdio telemetry is mirrored to both USB serial and UART0 (GPIO0 TX / GPIO1 RX, `115200` baud).
+* **USB CDC**: Stdio telemetry goes out over USB serial only - UART stdio is explicitly disabled (see `CMakeLists.txt`'s `pico_enable_stdio_uart(... 0)`) to keep a second interrupt-driven driver off the board while the time-critical HSTX DMA IRQ is running.
 
 ---
 

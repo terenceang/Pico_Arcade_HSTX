@@ -8,12 +8,15 @@ An emulator of the real 1978 Taito/Midway Space Invaders arcade PCB (Intel 8080 
 memory map, I/O ports, shift-register sprite hardware - `src/emu/`) for the Raspberry Pi Pico 2
 (RP2350), written in C against the Raspberry Pi Pico SDK, driving DVI video
 output over HDMI. It runs the *actual* arcade ROM, not a
-reimplementation of the game logic - see `Emulator.md`. **Status: Feature Complete** - the HSTX HDMI
+reimplementation of the game logic - see `Emulator.md`. The HSTX HDMI
 video pipeline (`src/video/`, `lib/pico_hdmi`), the CPU core + video output
-(`src/emu/`, `src/game.c`), SNES-controller input (`src/input/`, mapped to the
-emulated machine's coin/start/joystick/fire inputs), and sound-effect playback
+(`src/emu/`, `src/game.c`), and sound-effect playback
 (`src/audio/`, driven by the emulated machine's own port 3/5 writes, embedded into
-HDMI Data Islands by `pico_hdmi`) are built and working. See the Roadmap in `README.md`.
+HDMI Data Islands by `pico_hdmi`) are built and working. **No input device is currently
+wired up** - a SNES controller driver used to map to the emulated machine's
+coin/start/joystick/fire inputs (`invaders_machine_set_in1()`) but was removed after being
+implicated in the HDMI sync-loss investigation below; the game currently just idles on the
+attract screen. See the Roadmap in `README.md` and the "HSTX sync-loss caveat" below.
 
 **The real arcade ROM is required and is not in this repo** (Taito's copyrighted work -
 see `roms/README.md`). Without it in `roms/`, the build substitutes a zero-filled
@@ -95,23 +98,39 @@ instead. This points toward the underlying `pico_hdmi` HSTX/DMA engine being sen
 *irregularity/jitter* in some form, not to a specific subsystem in this project's own code, and not simply
 to "how much work" Core 0 does per frame.
 
-Next diagnostic step: separate "the CPU is executing instructions and taking RST1/RST2 interrupts every
-frame" from "real, dynamically-changing game content" specifically. `DEBUG_CPU_NOP_ROM` (added to
-`display_config.h`, off by default, wired into `invaders_machine.c`'s `mem_read()`) forces the ROM region to
-read back as all-`0x00` (NOP) instead of the real ROM, without touching anything in `roms/`: `i8080_step()`
-still runs the full real cycle count every scanline and RST1/RST2 still fire and get taken, but VRAM never
-changes (nothing ever writes to it) and no sound port is ever hit, so `render_arcade_row()` renders a
-constant all-black frame every time. If this survives indefinitely, the trigger is specifically about *real,
-changing* game content (VRAM writes feeding `render_arcade_row()`'s data-dependent per-pixel branching, or
-real ROM code's more varied ALU/branch/memory-access instruction mix vs. a tight NOP loop) rather than
-merely "the CPU is running." If it still drops, even a NOP-only CPU loop with interrupts is sufficient,
-narrowing further to `i8080_step`'s dispatch loop itself or RST1/RST2 delivery via `i8080_interrupt()`.
-Beyond that: Core 1's own ISR timing budget under sustained operation, whether the failure correlates with
-wall-clock uptime/frame count, and external factors (HDMI sink EDID re-negotiation, cable quality, thermal
-drift) remain possible. If you touch the audio queue, HSTX timing path, the SNES PIO driver, or Core 1's
-ISR, treat sustained HDMI sync-loss as a still-open bug and validate on hardware before claiming any related
-change fixes it - this exact mistake (declaring it fixed based on the audio-churn theory alone) is why this
-caveat documents a superseded hypothesis instead of a closed issue.
+**Confirmed narrowing #4 (soak test, real game with `DEBUG_CPU_NOP_ROM 1` + `DEBUG_SKIP_CONTROLLER_POLL 1` +
+`DEBUG_AUDIO_TEST_TONE 1`):** does NOT reproduce. `i8080_step()` ran the full real cycle count every
+scanline and RST1/RST2 fired and got taken normally, but with the ROM forced to all-NOP, VRAM never changed
+(constant all-black `render_arcade_row()` output every frame) and no sound port was ever hit. This survived
+indefinitely despite doing substantially *more* total Core 0 work per frame than the plain test card
+(narrowing #1) that also survived - ruling out "how much Core 0 work" as the deciding factor, and also
+weakening the earlier jitter/irregularity theory, since a NOP loop's dispatch cost is highly uniform yet
+this ran far more of it than narrowing #1 without dropping.
+
+**Confirmed narrowing #5 (soak test, `DEBUG_CONTROLLER_TESTCARD 1` + `DEBUG_SKIP_CONTROLLER_POLL 1` +
+`DEBUG_AUDIO_TEST_TONE 1` - the controller diagnostic card shown, but with its own `snes_controller_read()`
+call also skipped via the same flag):** DOES reproduce, with the SNES PIO FIFO never drained (same
+boot-then-stall PIO behavior as the passing narrowing #1 test) and zero CPU emulation running. This overturns
+narrowing #2's conclusion: it wasn't SNES PIO polling causing the earlier failure after all - the common
+factor across narrowing #2 and #5 is `src/video/controller_testcard.c`'s own render loop (a `memset` plus a
+nested per-scanline loop over 12 button boxes with bounds checks), which neither narrowing #1's plain
+`memcpy`-based test card nor narrowing #4's real, optimized `render_arcade_row()` lookup-table path shares.
+
+**Net result across all five tests: no single subsystem was cleanly isolated as sufficient and necessary.**
+Real CPU emulation with real interrupts survived when content was static (#4); a debug-only, comparatively
+simple render loop reproduced the failure with zero CPU emulation and zero PIO activity (#5); SNES PIO
+polling looked implicated (#2) but turned out not to be necessary (#5 dropped without it). The one subsystem
+implicated across multiple tests, directly or as the "only remaining difference," is the SNES controller
+input system (`src/input/` and its `controller_testcard.c` diagnostic) - so **it has been removed from the
+project entirely** (see the commit that added this note) rather than continuing to chase an inconclusive
+signal. This is a mitigation attempt, not a confirmed fix: whether the sync-loss still reproduces with the
+real game (no test cards, no SNES code at all) has not yet been soak-tested on hardware as of this note.
+If you touch the audio queue, HSTX timing path, or Core 1's ISR - or reintroduce any input method - treat
+sustained HDMI sync-loss as a still-open bug and validate on hardware before claiming any related change
+fixes it. If the game still drops with SNES gone, the next things to try: Core 1's own ISR timing budget
+under sustained operation, whether the failure correlates with wall-clock uptime/frame count rather than any
+workload, and external factors (HDMI sink EDID re-negotiation, cable quality, thermal drift on the RP2350's
+clock/PLL).
 
 ## Build
 
@@ -136,21 +155,19 @@ project can catch automatically.
 
 ### Debug test cards
 
-`src/display_config.h` controls two independent debug screens shown before/instead of the
-game, both off by default:
+`src/display_config.h` controls a debug screen shown before/instead of the game, off by
+default:
 
 ```c
 #define DEBUG_TESTCARD 0             // 1 to show the color-bar/grayscale test card at boot
 #define DEBUG_TESTCARD_SECONDS 5     // seconds to show it before handing off (0 = permanent)
-#define DEBUG_CONTROLLER_TESTCARD 0  // 1 to show a live SNES button diagram instead of the game
 ```
 
-`testcard.c` draws the color-bar/grayscale/moving-sync-bar pattern; `controller_testcard.c`
-draws a button-diagram (D-pad, face buttons, shoulders, select/start) that lights each
-button green while held, using the same `snes_controller_read()` the game itself uses - a
-hardware/wiring check independent of the emulator or ROM. If both are enabled, the
-color-bar card shows first, then the controller card. See `main.c` for how the two are
-sequenced into the per-scanline render loop.
+`testcard.c` draws the color-bar/grayscale/moving-sync-bar pattern - a display-pipeline
+sanity check independent of the emulator or ROM. See `main.c` for how it's sequenced into
+the per-scanline render loop. (There used to be a second controller-diagnostic test card
+alongside this one; it was removed along with the SNES controller driver it exercised - see
+the "HSTX sync-loss caveat" above.)
 
 ## Architecture
 
@@ -193,9 +210,10 @@ a couple of numbers to experiment with rather than one hardcoded transform: seve
 earlier attempts at deriving "the one correct" transform by hand were each wrong in a
 different way.
 
-Inputs are wired via `invaders_machine_set_in1()`, called every frame from `game.c` with
-the SNES controller's decoded button state (`src/input/snes_controller.c`) -
-SELECT/START/LEFT/RIGHT/A|B|X|Y map to coin/start/joystick/fire respectively.
+`invaders_machine_set_in1()` is the machine's input API (coin/start/joystick/fire), but no
+input device currently calls it - a SNES controller driver used to, from `game.c`, but was
+removed after being implicated in the HDMI sync-loss investigation (see the caveat above).
+The game currently just idles on the attract screen.
 
 **The real arcade ROM is not vendored** - it's loaded from 4 user-supplied files in
 `roms/` (gitignored) and embedded into the flash image at build time by
@@ -241,7 +259,7 @@ software during the Core 0 conversion pass (not HSTX hardware pixel-doubling - s
 | `src/emu/rom_data.h` | Declares the embedded ROM array defined by the CMake-generated source |
 | `roms/` | User-supplied real arcade ROM files go here (gitignored, not vendored) |
 | `cmake/generate_rom.cmake` | Embeds `roms/invaders.{h,g,f,e}` into a linkable C array at build time |
-| `src/video/` | Video & display pipeline (`dvi_display.c`/`.h`, `display_config.h`, `testcard.c`/`.h`, `controller_testcard.c`/`.h`) |
+| `src/video/` | Video & display pipeline (`dvi_display.c`/`.h`, `display_config.h`, `testcard.c`/`.h`) |
 | `lib/pico_hdmi/` | Core RP2350 hardware HSTX DVI + HDMI Data Island audio driver library |
 | `src/audio/audio_i2s.c` / `.h` | Software audio mixer - mixes sound-effect voices into 48 kHz stereo PCM and pushes Data Islands |
 | `src/audio/sound_effects.c` / `.h` | Decodes port 3/5 sound-effect bits into `audio_i2s_*` calls |
@@ -255,8 +273,10 @@ software during the Core 0 conversion pass (not HSTX hardware pixel-doubling - s
 ## Adding new source files
 
 New `.c`/`.S` files must be added explicitly to the `add_executable(Space_Invader_PICO ...)`
-list in `CMakeLists.txt` - there's no globbing. If a new file needs a PIO program, add it
-via `pico_generate_pio_header()` following the existing `snes_controller.pio` example.
+list in `CMakeLists.txt` - there's no globbing. Nothing in this project currently uses PIO
+(the SNES controller driver did, via `pico_generate_pio_header()` and the `hardware_pio`
+link library, both removed along with it - see the "HSTX sync-loss caveat"); a future PIO
+consumer would need to add both back.
 
 ## Key Attributions
 

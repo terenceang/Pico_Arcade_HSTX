@@ -75,10 +75,10 @@ const uint8_t *invaders_machine_vram(const invaders_machine_t *m);
 #define SI_IN1_P1_LEFT  (1u << 5)
 #define SI_IN1_P1_RIGHT (1u << 6)
 
-// Sets or clears the given IN1 control bit(s) (SI_IN1_* above). Called every
-// frame from game.c with the SNES controller's decoded button state (see
-// src/input/snes_controller.c) - SELECT/START/LEFT/RIGHT/A|B|X|Y map to
-// coin/start/joystick/fire respectively.
+// Sets or clears the given IN1 control bit(s) (SI_IN1_* above). No input
+// device is currently wired up to call this (see CLAUDE.md's "HSTX
+// sync-loss caveat" for why the SNES controller driver that used to call it
+// from game.c was removed) - kept for whatever input method replaces it.
 void invaders_machine_set_in1(invaders_machine_t *m, uint8_t bits, int pressed);
 
 #endif // INVADERS_MACHINE_H
