@@ -105,69 +105,96 @@ what rate is declared to the HDMI sink and what rate the sample-rate converter t
 `SOUND_SAMPLE_RATE_HZ` to `AUDIO_SAMPLE_RATE` on every call to `voice_next_sample()`.
 The two rates are decoupled by design.
 
+### Baseline numbers used throughout this section
+
+All figures are calculated for the current hardware: **RP2350 at 126 MHz**, **60 Hz frame rate**,
+**4 samples per HDMI Data Island packet**, **up to 5 simultaneous voices** (4 one-shot + 1 loop,
+all active = worst case), **10 sound effects averaging 0.3 s each** (representative asset set).
+
+- Frame budget: `126 000 000 / 60 = 2 100 000 cycles = 16 667 µs`
+- Resampler fast path (rates match): ~6 cycles per active voice per output sample — load + increment + compare
+- Resampler interpolation path (rates differ): ~10 cycles per active voice per output sample — the extra frac-accumulator add + conditional subtract loop
+
+These are conservative single-issue estimates; actual ARM Cortex-M33 pipelining makes the real cost slightly lower, but the *ratios* between options hold.
+
 ### Three-way comparison: 32 kHz vs 44.1 kHz vs 48 kHz
 
 #### 32 kHz
 
-| Dimension | Detail |
-|---|---|
-| **Packets / frame at 60 Hz** | 32000 / 4 / 60 = **133.3** — not an integer |
-| **Resampling cost** | Zero: source rate equals transport rate; the `#if SOUND_SAMPLE_RATE_HZ == AUDIO_SAMPLE_RATE` fast path in `audio_i2s.c` is taken |
-| **HDMI compliance** | 32 kHz is a valid CEA-861 audio sample rate. Most modern TVs and monitors accept it, but it is the least commonly tested consumer rate and a small number of displays misbehave |
-| **Queue target** | `(32000 / 4) / 60 = 133.33` — fractional; the queue target constant must be rounded to 133 or 134, introducing a cumulative ±1-packet/frame drift that must be absorbed by the H-blank insertion logic |
-| **Memory (test-tone LUT)** | `AUDIO_SAMPLE_RATE / 1000 = 32` entries for the 1 kHz debug tone — smallest of the three options |
-| **Audio bandwidth** | Nyquist at 16 kHz — more than sufficient for 1970s arcade sound effects, which have no content above ~6 kHz |
-| **Verdict** | Eliminates resampling entirely; fractional packets-per-frame and slightly reduced HDMI sink compatibility are the trade-offs |
+| Dimension | Detail | Practical impact |
+|---|---|---|
+| **Packets / frame at 60 Hz** | `32000 / 4 / 60 = 133.33` — not an integer | **Bad:** the fractional 0.33 accumulates to a full missing packet every **3 frames (50 ms)**; `audio_i2s_feed_queue()` needs an explicit running-remainder counter or the queue level drifts by ±1 packet continuously |
+| **Mixer CPU cost** | `533 samples/frame × 5 voices × 6 cycles = ~20 000 cycles/frame` | **~158 µs / frame = 0.95% of the frame budget** — cheapest of all three options |
+| **Saving vs 48 kHz** | 48 kHz costs ~46 000 cycles/frame; 32 kHz costs ~20 000 cycles/frame | **Saves ~26 000 cycles ≈ 190 µs ≈ 1.1% of the frame budget** — real but small on RP2350 at 126 MHz |
+| **Resampling cost** | Zero: source rate equals transport rate; the `#if SOUND_SAMPLE_RATE_HZ == AUDIO_SAMPLE_RATE` fast path in `audio_i2s.c` is taken | **Benefit:** eliminates ~4 extra cycles per active-voice per sample vs the resample path; saved instructions also reduce instruction-cache pressure slightly |
+| **HDMI compliance** | 32 kHz is a valid CEA-861 audio sample rate | **Risk:** a minority of HDMI sinks (some older TVs, some AV receivers) silently mute 32 kHz audio or display a "no audio" error even though it is technically legal |
+| **Flash / RAM for assets** | `10 effects × 0.3 s × 32 000 samples/s × 2 bytes = ~188 KB` | **Saves ~93 KB of flash vs 48 kHz source** — meaningful on a flash-constrained build |
+| **Audio bandwidth** | Nyquist at 16 kHz | No audible difference: all Space Invaders sound effects are band-limited below 6 kHz |
+| **Verdict** | Worth considering only if flash or CPU budget is critically tight | The 1.1% CPU saving and 93 KB flash saving are real; the fractional-packet accounting and HDMI compatibility risk are the trade-offs |
 
 #### 44.1 kHz
 
-| Dimension | Detail |
-|---|---|
-| **Packets / frame at 60 Hz** | 44100 / 4 / 60 = **183.75** — not an integer |
-| **Resampling cost** | The existing linear-interpolation resampler runs with a 32000/44100 step ratio. The ratio `32000 / 44100 = 320/441` has no small integer simplification, meaning the fractional accumulator in `voice_next_sample()` carries a non-power-of-two modulus. Every output sample requires one multiply and one compare regardless; cost is essentially the same as the 48 kHz path |
-| **HDMI compliance** | 44.1 kHz is a valid CEA-861 rate and is well-supported by virtually all HDMI sinks (it is the CD standard), but it is slightly less universal in the HDMI/AV receiver world than 48 kHz |
-| **Queue target** | `(44100 / 4) / 60 = 183.75` — fractional; same rounding/drift problem as 32 kHz, but worse because the fractional part (`0.75`) accumulates faster. Over 4 frames it drifts by 3 full packets. The HDMI standard handles this via the audio clock regeneration (ACR) mechanism, but the queue-level accounting in `audio_i2s_feed_queue()` needs explicit fractional compensation or will drift visibly |
-| **Memory (test-tone LUT)** | `44100 / 1000 = 44.1` — not an integer; the 1 kHz debug tone LUT length does not come out clean, so the tone will have a small pitch artefact or the LUT needs rounding |
-| **Audio bandwidth** | Nyquist at 22.05 kHz — overkill for this application |
-| **Verdict** | Brings no meaningful quality benefit over 48 kHz for this source material, while introducing fractional-packet problems that 48 kHz avoids. It is the worst of the three options for this project |
+| Dimension | Detail | Practical impact |
+|---|---|---|
+| **Packets / frame at 60 Hz** | `44100 / 4 / 60 = 183.75` — not an integer | **Worst of all three:** the 0.75 fractional part accumulates a full missing packet every **1.33 frames (22 ms)**; over 4 frames the drift is 3 whole packets — an audible stutter if uncompensated |
+| **Mixer CPU cost** | `735 samples/frame × 5 voices × 10 cycles = ~42 262 cycles/frame` | **~335 µs / frame = 2.0% of the frame budget** — more expensive than 48 kHz for no benefit |
+| **Cost vs 48 kHz** | 44.1 kHz is actually slightly *cheaper* than 48 kHz (735 vs 800 output samples), but the resample ratio `320:441` is harder to compute | **Saves only ~29 µs/frame (0.14%)** — negligible; offset by the fractional-packet accounting overhead that 44.1 kHz requires but 48 kHz does not |
+| **Resampling cost** | Step ratio `32000/44100 = 320/441` — no small integer simplification | **Same ~10 cycles/voice/sample as 48 kHz**, but the non-power-of-two modulus means the fractional accumulator never "resets cleanly," giving a slightly irregular per-sample branch pattern |
+| **HDMI compliance** | Valid CEA-861 rate, well-supported by most sinks | Slightly worse than 48 kHz in AV-receiver compatibility; no advantage over 48 kHz |
+| **Debug tone LUT** | `44100 / 1000 = 44.1` — not an integer | **Bad:** the 1 kHz debug tone LUT must be rounded to 44 or 45 entries, producing a ~0.23% pitch error (inaudible but impure) |
+| **Flash / RAM for assets** | `10 × 0.3 s × 44 100 × 2 bytes = ~258 KB` | **Uses 70 KB more flash than 32 kHz, 23 KB more than 48 kHz** with no audible improvement |
+| **Audio bandwidth** | Nyquist at 22.05 kHz | Overkill: 6 kHz source content, no benefit |
+| **Verdict** | **Avoid.** Gets the worst of both worlds: resampling cost without the clean-integer-packets property of 48 kHz, and fractional-packet drift worse than 32 kHz | |
 
 #### 48 kHz (current)
 
-| Dimension | Detail |
-|---|---|
-| **Packets / frame at 60 Hz** | 48000 / 4 / 60 = **200** — exact integer |
-| **Resampling cost** | Linear interpolation from 32 kHz to 48 kHz with a 32000/48000 = **2/3** step ratio. This is the simplest non-trivial ratio: every 3 output samples consume exactly 2 input samples on average, so the fractional accumulator stays small and bounded |
-| **HDMI compliance** | 48 kHz is the **primary** CEA-861 audio sample rate and is supported by every HDMI sink without exception |
-| **Queue target** | `(48000 / 4) / 60 = 200` — exact, no drift, no rounding needed. `AUDIO_QUEUE_TARGET_LEVEL` is derived from this identity in `audio_i2s.h` |
-| **Memory (test-tone LUT)** | `48000 / 1000 = 48` entries — an exact integer; the 1 kHz debug-tone LUT is clean |
-| **Audio bandwidth** | Nyquist at 24 kHz — more than sufficient; same overkill factor as 44.1 kHz for this content |
-| **Verdict** | Clean integer packets-per-frame, simplest resampling ratio, universal HDMI compatibility, and no queue-drift bookkeeping. Every structural property favours it |
+| Dimension | Detail | Practical impact |
+|---|---|---|
+| **Packets / frame at 60 Hz** | `48000 / 4 / 60 = 200` — **exact integer** | **Best:** no rounding, no drift, no compensating bookkeeping; `AUDIO_QUEUE_TARGET_LEVEL = 200` is exact and stable forever |
+| **Mixer CPU cost** | `800 samples/frame × 5 voices × 10 cycles = ~46 000 cycles/frame` | **~365 µs / frame = 2.19% of the frame budget** — highest absolute cost, but well within the ~14 600 µs idle tail every frame |
+| **Extra cost vs 32 kHz** | 48 kHz costs ~26 000 more cycles/frame than 32 kHz | **Costs an extra 190 µs / frame = +1.1% of frame budget** — real but negligible on RP2350 at 126 MHz; equivalent to adding just ~26 000 / 2 100 000 = 1.1% more load on Core 0 |
+| **Resampling cost** | Step ratio `32000/48000 = 2:3` — simplest possible non-trivial ratio | Every 3 output samples advance exactly 2 source samples; the fractional accumulator oscillates between 0 and 2 predictable values only, giving the most cache-friendly branch pattern of the resample path |
+| **HDMI compliance** | **Primary** CEA-861 audio sample rate | **Best:** supported by every HDMI sink (TVs, monitors, AV receivers, capture cards) without exception |
+| **Queue target constant** | `(48000 / 4) / 60 = 200` | Exact — `AUDIO_QUEUE_TARGET_LEVEL` in `audio_i2s.h` requires zero correction logic now or in the future |
+| **Debug tone LUT** | `48000 / 1000 = 48` entries | Exact integer; the 1 kHz tone is a perfect sine with zero pitch error |
+| **Flash / RAM for assets** | `10 × 0.3 s × 48 000 × 2 bytes = ~281 KB` (if assets were authored at 48 kHz) | Assets are currently authored at 32 kHz and resampled at runtime, so **flash cost is actually the same 188 KB as the 32 kHz option** — only the runtime output rate differs |
+| **Audio bandwidth** | Nyquist at 24 kHz | Overkill, but costs nothing extra |
+| **Verdict** | **Preferred.** Every structural property favours it. The 1.1% extra CPU cost over 32 kHz is the only trade-off, and it is inconsequential at 126 MHz | |
 
 ### Summary comparison table
 
 | Property | 32 kHz | 44.1 kHz | 48 kHz (current) |
 |---|---|---|---|
-| Packets/frame at 60 Hz | 133.3 (fractional) | 183.75 (fractional) | **200 (exact)** |
-| Resampling from 32 kHz source | **None (zero cost)** | Yes, 320:441 ratio | Yes, 2:3 ratio |
+| Packets/frame at 60 Hz | 133.33 (fractional) | 183.75 (fractional) | **200 (exact)** |
+| Mixer CPU cost (5 voices) | **~20 000 cyc / ~158 µs / 0.95%** | ~42 262 cyc / ~335 µs / 2.0% | ~46 000 cyc / ~365 µs / 2.19% |
+| vs 48 kHz (CPU) | **Saves ~26 000 cyc ≈ 190 µs ≈ 1.1%** | Saves ~3 738 cyc ≈ 30 µs ≈ 0.14% | baseline |
+| Resampling from 32 kHz source | **None — fast path taken** | Yes, 320:441 ratio | Yes, 2:3 ratio |
+| Queue drift if uncompensated | ±1 packet every 3 frames (50 ms) | ±1 packet every 1.3 frames (22 ms) | **Zero — never drifts** |
+| Compensation code required | Yes — running-remainder counter | Yes — worse than 32 kHz | **No** |
 | HDMI sink compatibility | Good (most sinks) | Very good | **Universal** |
-| Queue drift | Yes – needs compensation | Yes – worse than 32 kHz | **None** |
-| Debug tone LUT integer length | Yes (32 entries) | No (44.1 entries) | **Yes (48 entries)** |
-| Audio bandwidth headroom | Sufficient | Excess | Excess |
-| Net recommendation | Viable if CPU is critically tight | **Avoid** | **Preferred** |
+| Flash for assets (10 × 0.3 s) | **~188 KB** | ~258 KB | **~188 KB** (assets stay at 32 kHz) |
+| Debug tone LUT (1 kHz) | 32 entries (clean) | 44.1 — not integer (pitch error) | **48 entries (clean)** |
+| Net recommendation | Viable only if CPU/flash is critically tight | **Avoid** | **Preferred** |
 
 ### Why 32 kHz is the only credible alternative
 
-If a future port of this code to a much slower MCU needed to eliminate the resampler overhead entirely,
-switching `AUDIO_SAMPLE_RATE` from 48000 to 32000 would allow the `#if SOUND_SAMPLE_RATE_HZ == AUDIO_SAMPLE_RATE`
-fast path in `audio_i2s.c` to be taken for all voices, saving roughly one multiply + one compare per
-output sample per active voice.
-The cost is fractional packet accounting (a 133/134 alternating queue target driven by a running
-fractional remainder counter) and marginally reduced HDMI sink compatibility.
-On the RP2350 at 126 MHz, the resampler cost is negligible compared to the CPU emulation budget,
-so this trade is not worth making today.
+Switching `AUDIO_SAMPLE_RATE` from 48000 to 32000 saves **~26 000 cycles per frame (≈ 190 µs, ≈ 1.1% of
+the 16.67 ms frame budget)** on RP2350 at 126 MHz, because the `#if SOUND_SAMPLE_RATE_HZ == AUDIO_SAMPLE_RATE`
+fast path in `audio_i2s.c` drops to ~6 cycles/voice/sample instead of ~10.
+It also saves **no flash** (assets are already stored at 32 kHz) but would save flash if the project were
+ever ported to a platform where assets needed to be encoded at the output rate.
 
-44.1 kHz offers neither the zero-resampling benefit of 32 kHz nor the clean integer-packets benefit
-of 48 kHz, and should not be considered for this project.
+The trade-off is:
+- **Fractional-packet bookkeeping**: the queue target must alternate between 133 and 134 packets, driven by
+  a running-remainder counter, or the queue drifts by ±1 packet every 3 frames (50 ms) indefinitely.
+- **Marginally reduced HDMI sink compatibility**: a minority of sinks misbehave at 32 kHz.
+
+On RP2350 at 126 MHz, 1.1% of the frame budget is inconsequential — the CPU emulation alone takes far
+more. This trade is not worth making unless targeting a much slower MCU.
+
+44.1 kHz offers neither the zero-resampling benefit of 32 kHz nor the clean integer-packets benefit of
+48 kHz. It also has the worst drift rate (±1 packet every 22 ms) and no audible quality advantage. It
+should not be considered for this project.
 
 ### Audio-related suggestions
 
