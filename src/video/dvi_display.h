@@ -32,12 +32,12 @@ void dvi_display_set_palette(uint8_t index, uint32_t rgb888);
 // Core 1 entry point: idle worker for HSTX background tasks.
 void core1_main(void);
 
+// Blocks Core 0 until the next hardware VSYNC (video_frame_count changes).
+// Returns the new video_frame_count value.
+uint32_t dvi_display_wait_for_vsync(uint32_t last_vfc);
+
 // Raw pico_hdmi video_frame_count (incremented once per real vsync serviced
-// by Core 1's DMA ISR) - exposed so Core 0 can independently measure its
-// advance rate against its own wall clock. Diagnostic only: no corrective
-// action is taken based on this (see CLAUDE.md's "HSTX sync-loss caveat" -
-// the priority is finding and fixing what actually causes the desync, not
-// detecting and reacting to it after the fact).
+// by Core 1's DMA ISR).
 uint32_t dvi_display_get_video_frame_count(void);
 
 #endif // DVI_DISPLAY_H

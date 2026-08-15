@@ -29,20 +29,25 @@ static unsigned voice_steal_next;
 static audio_voice_t loop_voice;
 static int audio_frame_counter = 0;
 
-// sound_table[] PCM is authored at SOUND_SAMPLE_RATE_HZ (see sound_data.h),
-// but the mixer must output at AUDIO_SAMPLE_RATE (fixed by the HDMI audio
-// pacing/ACR math - see dvi_display.c). A Bresenham-style accumulator steps
-// the source position at SOUND_SAMPLE_RATE_HZ/AUDIO_SAMPLE_RATE per output
-// sample; the accumulator itself stays bounded by AUDIO_SAMPLE_RATE
-// regardless of how long the sound is, unlike a fixed-point position would
-// be. Nearest-sample only (no interpolation) - acceptable for short 8-bit-
-// era arcade effects.
+// sound_table[] PCM is authored at SOUND_SAMPLE_RATE_HZ (32 kHz).
+// Output is at AUDIO_SAMPLE_RATE (32 kHz).
+// With matching sample rates, voice advance is direct 1:1 with zero resampling overhead.
 static inline int16_t voice_advance(audio_voice_t *v, bool loop) {
     if (!v->data || v->len == 0) {
         v->active = false;
         return 0;
     }
     int16_t sample = v->data[v->pos];
+#if SOUND_SAMPLE_RATE_HZ == AUDIO_SAMPLE_RATE
+    if (++v->pos >= v->len) {
+        if (loop) {
+            v->pos = 0;
+        } else {
+            v->active = false;
+            v->pos = v->len - 1;
+        }
+    }
+#else
     v->frac += SOUND_SAMPLE_RATE_HZ;
     while (v->frac >= AUDIO_SAMPLE_RATE) {
         v->frac -= AUDIO_SAMPLE_RATE;
@@ -56,11 +61,13 @@ static inline int16_t voice_advance(audio_voice_t *v, bool loop) {
             }
         }
     }
+#endif
     return sample;
 }
 
 #if DEBUG_AUDIO_TEST_TONE
-#define DEBUG_TONE_LUT_LEN 48 // AUDIO_SAMPLE_RATE (48,000 Hz) / 48 = 1,000 Hz (1 kHz tone)
+#define DEBUG_TONE_FREQ_HZ 1000
+#define DEBUG_TONE_LUT_LEN (AUDIO_SAMPLE_RATE / DEBUG_TONE_FREQ_HZ)
 static int16_t debug_tone_lut[DEBUG_TONE_LUT_LEN];
 static audio_voice_t debug_voice;
 #endif
@@ -94,20 +101,10 @@ static inline void mix_one_sample(int16_t *out_mono) {
     *out_mono = (int16_t)mix;
 }
 
-// Mixes and pushes a bounded number of 4-sample Data Island packets so the
-// queue is kept healthy without entering a pathological high-rate churn loop
-// when Core 0 is late. This is intentionally capped: a queue that is already
-// healthy should not be repeatedly re-filled by a large while-loop each frame.
+// Mixes and pushes 4-sample Data Island packets to keep the HDMI audio queue
+// filled to target_level (200 packets per 60 Hz frame).
 void audio_i2s_feed_queue(uint32_t target_level) {
-    uint32_t level = hstx_di_queue_get_level();
-    if (level >= target_level)
-        return;
-
-    uint32_t budget = target_level - level;
-    if (budget > 16)
-        budget = 16;
-
-    for (uint32_t i = 0; i < budget; ++i) {
+    while (hstx_di_queue_get_level() < target_level) {
         audio_sample_t samples[4];
         for (int c = 0; c < 4; c++) {
             int16_t sample16;

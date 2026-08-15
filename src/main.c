@@ -54,45 +54,20 @@ static void stop_test_tone_once_testcard_ends(bool show_testcard) {
 // than the large recovery burst that previously triggered the HSTX
 // sync-loss failure mode (see CLAUDE.md's "HSTX sync-loss caveat").
 static void render_frame(uint8_t *frame_buf, uint32_t frame_count, bool show_testcard) {
-    for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
-        if ((y & 7) == 0) {
-            audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
-        }
-
-        uint8_t *dst = frame_buf + y * FRAME_WIDTH;
 #if DEBUG_TESTCARD
-        if (show_testcard) {
-            testcard_render_scanline(dst, y, frame_count);
-            continue;
-        }
+    if (show_testcard) {
+        testcard_render_frame(frame_buf, frame_count);
+        return;
+    }
 #else
-        (void)show_testcard;
+    (void)show_testcard;
+    (void)frame_count;
 #endif
-        game_render_scanline(dst, y, frame_count);
-    }
+    game_render_frame(frame_buf);
 }
 
-// Blocks until frame_count's frame deadline (start + (frame_count+1) frame
-// periods - a fixed, wall-clock-anchored schedule, entirely independent of
-// how long rendering took), continuing to feed the audio queue in small
-// steps the whole time instead of one blocking sleep_until(). Rendering
-// above typically finishes in a few ms, well inside the 16.67ms frame
-// budget, so most of this function's time is this idle tail - a single
-// sleep_until() here would leave the audio queue completely unfed for that
-// whole stretch while Core 1 keeps draining it in real time, which is what
-// was previously causing audio to starve/drop out after a few frames.
-static void pace_frame_and_feed_audio(absolute_time_t start, uint32_t frame_count) {
-    uint64_t target_us = ((uint64_t)frame_count + 1) * 1000000ull / DISPLAY_REFRESH_HZ;
-    absolute_time_t deadline = delayed_by_us(start, target_us);
-    while (!time_reached(deadline)) {
-        audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
-        sleep_us(250);
-    }
-}
-
-// Diagnostic only, no corrective action: once per ~1s of software frames,
-// measures pico_hdmi's real vsync rate (video_frame_count) against Core 0's
-// own wall-clock-paced frame_count. See CLAUDE.md's "HSTX sync-loss caveat".
+// Diagnostic only, no corrective action: measures pico_hdmi's real vsync rate
+// against Core 0's frame counter.
 static void update_hdmi_fps_diagnostic(uint32_t frame_count, uint32_t *last_check_frame, uint32_t *last_vfc,
                                         uint32_t *measured_fps) {
     if (frame_count - *last_check_frame < DISPLAY_REFRESH_HZ)
@@ -124,7 +99,7 @@ int main() {
 #endif
     game_init();
 
-    printf("[DEBUG] Initializing audio mixer...\n");
+    printf("[DEBUG] Initializing audio mixer (48 kHz)...\n");
     audio_i2s_init();
     printf("[DEBUG] Audio mixer initialized.\n");
 #if DEBUG_AUDIO_TEST_TONE
@@ -140,36 +115,41 @@ int main() {
     sleep_ms(100);
     printf("[DEBUG] Core 1 launched.\n");
 
-    printf("\n[STATUS] Rendering HSTX HDMI 640x480 @ %dHz (%dx%d 8bpp palettized + HDMI Audio)...\n",
+    printf("\n[STATUS] Rendering HSTX HDMI 640x480 @ %dHz (%dx%d 8bpp palettized + HDMI Audio 48kHz)...\n",
            DISPLAY_REFRESH_HZ, FRAME_WIDTH, FRAME_HEIGHT);
 
     uint32_t frame_count = 0;
     uint32_t last_vfc_check_frame = 0;
     uint32_t last_vfc = dvi_display_get_video_frame_count();
     uint32_t last_measured_hdmi_fps = DISPLAY_REFRESH_HZ;
-    absolute_time_t start = get_absolute_time();
 
     while (true) {
+        // 1. Wait for hardware VSYNC from Core 1 HSTX (exact 60.000 Hz genlock)
+        last_vfc = dvi_display_wait_for_vsync(last_vfc);
+
+        // 2. Publish completed buffer during V-blank and switch to write buffer
+        dvi_display_present_frame();
+        uint8_t *frame_buf = dvi_display_get_write_buffer();
+
+        // 3. Run Space Invaders arcade emulation for 1 full frame (33,280 cycles)
         bool show_testcard = testcard_active_this_frame(frame_count);
 #if DEBUG_AUDIO_TEST_TONE && DEBUG_TESTCARD
         stop_test_tone_once_testcard_ends(show_testcard);
 #endif
+        if (!show_testcard) {
+            game_run_frame();
+        }
 
-        uint8_t *frame_buf = dvi_display_get_write_buffer();
+        // 4. Render arcade VRAM to 8bpp write buffer
         render_frame(frame_buf, frame_count, show_testcard);
 #if DEBUG_HDMI_STATUS_OVERLAY
         debug_overlay_draw_hdmi_status(frame_buf, last_measured_hdmi_fps);
 #endif
 
-        // Publish this frame to Core 1 and reclaim the other buffer - see
-        // dvi_display.c's double-buffering scheme (dvi_display_present_frame()).
-        dvi_display_present_frame();
+        // 5. Keep audio Data Island queue topped up
+        audio_i2s_feed_queue(AUDIO_QUEUE_TARGET_LEVEL);
 
-        // Video's pacing is this call alone, computed the same way
-        // regardless of what audio does inside it - the frame cadence is
-        // entirely wall-clock/HSTX-hardware driven, never audio-driven.
-        pace_frame_and_feed_audio(start, frame_count);
-
+        // 6. Live FPS diagnostic
         update_hdmi_fps_diagnostic(frame_count, &last_vfc_check_frame, &last_vfc, &last_measured_hdmi_fps);
 
         ++frame_count;

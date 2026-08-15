@@ -88,3 +88,9 @@ void testcard_render_scanline(uint8_t *dst, unsigned y, unsigned frame_count) {
         memcpy(dst, scanline_bottom, FRAME_WIDTH);
     }
 }
+
+void testcard_render_frame(uint8_t *dst, uint32_t frame_count) {
+    for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
+        testcard_render_scanline(dst + y * FRAME_WIDTH, y, frame_count);
+    }
+}

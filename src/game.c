@@ -68,11 +68,16 @@ static inline uint8_t lit_pixel_color(unsigned ox, unsigned active_width);
 #if SI_DISPLAY_ROTATION == 0 || SI_DISPLAY_ROTATION == 180
 static int s_clip_start;
 static int s_clip_end;
-static uint8_t s_row_byte_index[FRAME_WIDTH];
-static uint8_t s_row_bit_mask[FRAME_WIDTH];
+
+typedef struct {
+    uint8_t byte_idx;
+    uint8_t bit_mask;
 #if SI_ENABLE_COLOR_OVERLAY
-static uint8_t s_row_lit_color[FRAME_WIDTH];
+    uint8_t lit_color;
 #endif
+} render_map_t;
+
+static render_map_t s_row_map[FRAME_WIDTH];
 
 static void init_render_row_map(void) {
     int start_x = SI_SCREEN_OFFSET_X + SI_ACTIVE_X_OFFSET;
@@ -100,10 +105,10 @@ static void init_render_row_map(void) {
         lx = (SI_ARCADE_WIDTH - 1) - lx;
 #endif
 
-        s_row_byte_index[x] = (uint8_t)(lx >> 3);
-        s_row_bit_mask[x] = (uint8_t)(1u << (lx & 7));
+        s_row_map[x].byte_idx = (uint8_t)(lx >> 3);
+        s_row_map[x].bit_mask = (uint8_t)(1u << (lx & 7));
 #if SI_ENABLE_COLOR_OVERLAY
-        s_row_lit_color[x] = lit_pixel_color(ox, SI_ARCADE_WIDTH);
+        s_row_map[x].lit_color = lit_pixel_color(ox, SI_ARCADE_WIDTH);
 #endif
     }
 }
@@ -175,9 +180,10 @@ static inline void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned
     const uint8_t *column = vram + (size_t)col * 32;
 
     for (int x = s_clip_start; x < s_clip_end; ++x) {
-        int bit = (column[s_row_byte_index[x]] & s_row_bit_mask[x]) != 0;
+        const render_map_t *rm = &s_row_map[x];
+        int bit = (column[rm->byte_idx] & rm->bit_mask) != 0;
 #if SI_ENABLE_COLOR_OVERLAY
-        buf[x] = bit ? s_row_lit_color[x] : COLOR_BLACK;
+        buf[x] = bit ? rm->lit_color : COLOR_BLACK;
 #else
         buf[x] = bit ? COLOR_WHITE : COLOR_BLACK;
 #endif
@@ -231,6 +237,8 @@ static inline void render_arcade_row(uint8_t *buf, const uint8_t *vram, unsigned
 
 #endif
 
+#define SI_CYCLES_PER_HALF   (SI_CYCLES_PER_FRAME / 2)
+
 void game_init(void) {
     invaders_machine_init(&s_machine);
     s_machine.sound_write = sound_effects_on_port_write;
@@ -240,16 +248,27 @@ void game_init(void) {
 #endif
 }
 
+// Runs Space Invaders 8080 CPU emulation for 1 full frame (33,280 cycles):
+// Half 1 (16,640 cycles) -> Mid-screen Interrupt RST 1 -> Half 2 (16,640 cycles) -> V-blank Interrupt RST 2.
+void game_run_frame(void) {
+    invaders_machine_run_cycles(&s_machine, SI_CYCLES_PER_HALF);
+    invaders_machine_interrupt_mid_screen(&s_machine);
+    invaders_machine_run_cycles(&s_machine, SI_CYCLES_PER_HALF);
+    invaders_machine_interrupt_vblank(&s_machine);
+}
+
+// Converts the entire 256x224 arcade VRAM to the 320x240 8bpp frame buffer.
+void game_render_frame(uint8_t *dst) {
+    const uint8_t *vram = invaders_machine_vram(&s_machine);
+    for (unsigned y = 0; y < FRAME_HEIGHT; ++y) {
+        render_arcade_row(dst + y * FRAME_WIDTH, vram, y);
+    }
+}
+
 void game_render_scanline(uint8_t *dst, unsigned y, unsigned frame_count) {
     (void)frame_count;
 
     if (y == 0) {
-        // No input device is currently wired up (see CLAUDE.md's "HSTX
-        // sync-loss caveat" - the SNES controller driver that used to set
-        // these was removed after being implicated in that investigation).
-        // invaders_machine_set_in1() is still there for whatever replaces
-        // it; until then, the machine's coin/start/fire/left/right bits
-        // just stay at their power-on idle state from invaders_machine_init().
         invaders_machine_interrupt_vblank(&s_machine);
         s_mid_screen_fired = false;
     }

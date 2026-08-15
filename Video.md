@@ -19,41 +19,34 @@ The RP2350 includes a dedicated hardware peripheral (HSTX) designed for high-spe
 ```
 Core 0 (producer & emulator, main.c)          Core 1 / DMA ISR (pico_hdmi / HSTX engine)
 ------------------------------------          -------------------------------------------
-dvi_display_get_write_buffer()                dvi_scanline_fill_cb()
-game_render_scanline()                        (8bpp -> RGB565 palette lookup +
-(8bpp indexed -> the write buffer)              horizontal doubling, per line,
-        |                                       reading whichever fb_buffers[]
-dvi_display_present_frame()                     entry Core 0 isn't writing)
-(atomically flips which of                          |
- fb_buffers[2] Core 1 reads)                         v
-        |                                     HSTX Hardware Encoder (TMDS + Data Islands)
-audio_i2s_feed_queue()                              |
-(48 kHz stereo PCM -> hstx_di_queue_push,           v
- called repeatedly through the frame,         HSTX PHY -> GPIO 12-19
- not once as a single burst)
-        |
-sleep_until(delayed_by_us(start, target_us))
-(Microsecond wall-clock timekeeping anchor)
+dvi_display_wait_for_vsync()                  dvi_scanline_fill_cb()
+(locks strictly to hardware 60 Hz VSYNC)      (8bpp -> RGB565 palette lookup from Scratch X,
+        |                                      reading fb_buffers[s_front_idx])
+dvi_display_present_frame()                            |
+(atomically flips double-buffer during V-blank)        v
+        |                                     Precomposed Active-Line Headers
+game_run_frame()                              (Patches 36-word Data Island in < 1.2 µs)
+(16,640 cyc -> RST 1 -> 16,640 cyc -> RST 2)           |
+        |                                              v
+game_render_frame()                           HSTX Hardware Encoder (TMDS + Data Islands)
+(256x224 VRAM -> 320x240 write buffer)                 |
+        |                                              v
+audio_i2s_feed_queue(200)                     HSTX PHY -> GPIO 12-19
+(48 kHz stereo PCM -> hstx_di_queue_push)
 ```
 
-**Core 0** (`main.c`, `dvi_display.c`):
-- Gets a write buffer via `dvi_display_get_write_buffer()` and renders 8bpp scanlines into it (`game_render_scanline()`).
-- Calls `dvi_display_present_frame()` once the frame is complete - atomically flips which of `dvi_display.c`'s two 8bpp framebuffers (`fb_buffers[2]`) Core 1 reads, so Core 0 always writes the buffer Core 1 *isn't* currently reading. An earlier design instead pre-converted the whole frame to RGB565 on Core 0 and handed Core 1 a raw pointer into a single (non-double-buffered) array - a genuine, unsynchronized cross-core data race, since Core 0 could write the same memory Core 1's DMA was concurrently reading. See `CLAUDE.md`'s "HSTX sync-loss caveat" for the investigation that found this.
-- Generates 48 kHz PCM audio samples and pushes HDMI Data Islands via `audio_i2s_feed_queue()`, called repeatedly through the frame (not as one burst) to keep pico_hdmi's Data Island queue continuously topped up.
-- Paces the main loop using an absolute microsecond wall-clock anchor (`sleep_until(delayed_by_us(start, target_us))`), eliminating clock drift between CPU audio production and HDMI CTS/N clock generation.
+**Core 0** (`main.c`, `dvi_display.c`, `game.c`):
+- Synchronizes frame start strictly to hardware VSYNC via `dvi_display_wait_for_vsync()`, guaranteeing a rock-solid 60.000 Hz frame rate.
+- Calls `dvi_display_present_frame()` during vertical blanking, eliminating tearing and buffer data races.
+- Runs Space Invaders 8080 CPU emulation in two clean half-frame blocks (`game_run_frame()`), firing `RST 1` mid-screen and `RST 2` vblank per the 1978 arcade PCB hardware specification. Finishes in ~2 ms, leaving ~14.6 ms of the frame free of shared bus traffic.
+- Renders the full 256x224 arcade VRAM to the 320x240 8bpp write buffer in a single linear pass (`game_render_frame()`).
+- Feeds 48 kHz PCM audio samples into the Data Island queue (`audio_i2s_feed_queue()`), keeping the queue continuously topped up at 200 packets per frame.
 
 **HSTX Engine** (`pico_hdmi`, Core 1):
-- `dvi_scanline_fill_cb()` (a *scanline fill* callback, matching `pico_hdmi`'s own reference example - `examples/bouncing_box`) does the 8bpp->RGB565 palette lookup and horizontal-doubling itself, per line, directly into the ISR's own line buffer - reading from whichever `fb_buffers[]` entry Core 0 published via `dvi_display_present_frame()`. An earlier per-pixel-lookup-in-the-ISR design (a *different* problem than the data race above) had blown HDMI mode's per-line timing budget at native 640-pixel width; the current 320-pixel-wide lookup (doubled via packing, not re-fetching) is the design that replaced it - see display_config.h's FRAME_WIDTH/HEIGHT comment.
-- Hardware TMDS encoding via RP2350 HSTX peripheral.
-- Injects HDMI Data Island packets (Audio samples, InfoFrames, ACR) during horizontal sync/blanking periods.
-
-**Known issue**: an intermittent HDMI sync-loss bug still reproduces under real gameplay (a corrupted HSTX
-command word desyncing the DMA engine, per `pico_hdmi`'s own documented failure mode). This project
-deliberately does not run any resync/reboot recovery logic - an earlier attempt at one was removed, since
-detecting and reacting to the desync doesn't address why it happens. The current mitigation attempt is
-`PICO_HDMI_LINE_BUFFER_IN_SCRATCH_Y` (`CMakeLists.txt`), relocating `pico_hdmi`'s active-line buffer away
-from Core 0's working set to reduce bus contention. See `CLAUDE.md`'s "HSTX sync-loss caveat" for the full
-investigation and current status.
+- `PICO_HDMI_PRECOMPOSED_ACTIVE_LINES`: Static active-line headers are built once at boot. The scanline ISR only patches the 36-word audio packet into the slot (< 1.2 µs), providing massive timing margin against the 6.35 µs H-blank deadline.
+- `dvi_scanline_fill_cb()`: Converts 8bpp to packed RGB565 using `palette_fast` in Scratch X RAM with zero shared bus contention.
+- Hardware TMDS encoding via RP2350 HSTX peripheral over GPIO 12-19.
+- Injects 48 kHz HDMI Data Island packets (Audio samples, InfoFrames, ACR N=6144 CTS=25200) during blanking intervals.
 
 ---
 

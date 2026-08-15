@@ -35,7 +35,7 @@ set(PICO_BOARD pico2 CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(Space_Invader_PICO VERSION 1.0.0 LANGUAGES C CXX ASM)
+project(Space_Invader_PICO VERSION 1.1.0 LANGUAGES C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -47,6 +47,7 @@ pico_sdk_init()
 # detecting and recovering from it after the fact. See CLAUDE.md's "HSTX
 # sync-loss caveat".
 set(PICO_HDMI_LINE_BUFFER_IN_SCRATCH_Y ON CACHE BOOL "Place the HDMI active-line DMA buffer in scratch Y RAM" FORCE)
+set(PICO_HDMI_PRECOMPOSED_ACTIVE_LINES ON CACHE BOOL "Enable precomposed HDMI active-line templates" FORCE)
 
 # Add pico_hdmi library for HSTX HDMI video & audio
 add_subdirectory(lib/pico_hdmi)

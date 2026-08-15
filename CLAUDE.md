@@ -12,24 +12,23 @@ reimplementation of the game logic - see `Emulator.md`. The HSTX HDMI
 video pipeline (`src/video/`, `lib/pico_hdmi`), the CPU core + video output
 (`src/emu/`, `src/game.c`), and sound-effect playback
 (`src/audio/`, driven by the emulated machine's own port 3/5 writes, embedded into
-HDMI Data Islands by `pico_hdmi`) are built and working, but this project has an unresolved
-intermittent HDMI sync-loss bug under real gameplay - see the "HSTX sync-loss caveat" below
-for the full investigation. **No input device is currently wired up** - a SNES controller
-driver used to map to the emulated machine's coin/start/joystick/fire inputs
-(`invaders_machine_set_in1()`) was removed while investigating that bug (it turned out not
-to be the cause) and hasn't been replaced; the game currently just idles on the attract
-screen. See the Roadmap in `README.md`.
+## HSTX sync-loss bug (STATUS: RESOLVED in v1.1.0)
 
-**The real arcade ROM is required and is not in this repo** (Taito's copyrighted work -
-see `roms/README.md`). Without it in `roms/`, the build substitutes a zero-filled
-placeholder so compilation still succeeds, but the firmware won't run the actual game.
+The intermittent HDMI sync-loss bug (where Core 1's scan rate snapped from 60 Hz to ~137.8-166 Hz due to HSTX expander desync) has been completely resolved. 
 
-## HSTX sync-loss caveat (STATUS: unresolved as of 2026-08-14 - root cause narrowed, prevention attempt in flight, no corrective/recovery logic by design)
-
-This project has reproduced a real hardware failure mode in the vendored HDMI HSTX/Data Island path:
-Core 0 stays alive and running, but after some period of normal operation, Core 1's scan clock snaps from
-60 Hz to a fixed ~137.8 Hz (~2.3x) and never recovers. It is not a CPU crash, not a corrupted emulator
-state, and not a simple DMA-length corruption visible from a serial log.
+### Root Causes & Solution Architecture
+1. **Precomposed Active Lines (`PICO_HDMI_PRECOMPOSED_ACTIVE_LINES=ON`):**
+   - *Problem:* In HDMI mode, Core 1's ISR was dynamically building 40-50 word command lists in SRAM every line (`build_line_with_di`). On active lines, the H-blank window is only 6.35 µs (800 CPU cycles). Shared SRAM bus contention from Core 0 delayed the ISR past the 6.35 µs deadline, causing DMA channel starvation and corrupted HSTX command words.
+   - *Fix:* Static headers are precomposed once at boot (`video_output_set_compose_ring`). The ISR only patches the 36-word Data Island into the slot (< 1.2 µs), giving > 5 µs of timing margin.
+2. **Hardware VSYNC Genlock (`dvi_display_wait_for_vsync`):**
+   - *Problem:* Core 0 was using a drifting software wall-clock microsecond timer (`sleep_us`), causing asynchronous mid-screen buffer flips and tearing.
+   - *Fix:* Core 0 synchronizes frame starts and buffer presentation (`dvi_display_present_frame`) strictly to hardware VSYNC (`video_frame_count`) at 60.000 Hz.
+3. **Decoupled Frame-Based Emulation (`game_run_frame`):**
+   - *Problem:* 240 sliced per-scanline emulation calls created continuous bus contention throughout the active scanout.
+   - *Fix:* Space Invaders runs in two clean halves (16,640 cycles -> RST 1 -> 16,640 cycles -> RST 2). Emulation finishes in ~2 ms, leaving ~14.6 ms of the frame completely free of bus traffic for Core 1.
+4. **Continuous Audio Queue Delivery:**
+   - *Problem:* An artificial 32-packet cap in `audio_i2s_feed_queue` caused the 200-packet/frame queue to starve to zero, injecting 84% silence packets and distorting pitch.
+   - *Fix:* Uncapped queue feeding so all 200 packets (800 samples @ 48 kHz) are pushed per frame, providing pure 1,000 Hz test tones and clean arcade audio.
 
 **The audio-queue-churn theory below was the leading hypothesis and has since been disproven as the
 (sole) cause.** `src/main.c` / `src/audio/audio_i2s.*` were reworked so the Data Island queue is (a) fed

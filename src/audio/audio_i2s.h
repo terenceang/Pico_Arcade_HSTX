@@ -20,18 +20,9 @@
 
 #define AUDIO_SAMPLE_RATE 48000
 
-// Default HDMI audio queue fill target for audio_i2s_feed_queue() - about
-// one video frame's worth (48kHz / 4 samples per packet / 60Hz = ~200
-// packets), well under the ring buffer's 256-entry capacity
-// (DI_RING_BUFFER_SIZE in hstx_data_island_queue.c). This is buffer *depth*,
-// not burst size - audio_i2s_feed_queue() caps how much it will push in any
-// single call regardless of this target, so raising the target only means
-// "keep more slack in hand," never "allow one big catch-up burst." A
-// shallow target (this used to be 32, ~2.7ms) leaves almost no margin
-// against ordinary Core 0 scheduling jitter (interrupts, USB stdio, etc.)
-// and was audibly glitchy in practice even with continuous refeeding -
-// ~200 (~16.7ms) gives enough slack to ride that out.
-#define AUDIO_QUEUE_TARGET_LEVEL 200
+// Default HDMI audio queue fill target for audio_i2s_feed_queue() - one video frame's worth
+// (AUDIO_SAMPLE_RATE / 4 samples per packet / DISPLAY_REFRESH_HZ).
+#define AUDIO_QUEUE_TARGET_LEVEL ((AUDIO_SAMPLE_RATE / 4) / DISPLAY_REFRESH_HZ)
 
 // Resets the software mixer's voice state. Call once, before the main
 // loop starts calling audio_i2s_feed_queue().

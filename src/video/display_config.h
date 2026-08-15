@@ -29,43 +29,23 @@
 #endif
 
 // Debug audio test tone: set to 1 to play a continuous 1kHz tone, 0 to
-// disable. With DEBUG_TESTCARD also on, the tone accompanies the test card
-// and stops once the game takes over. With DEBUG_TESTCARD off (as here),
-// the tone just keeps playing indefinitely - useful on its own for
-// listening for HDMI audio Data Island underruns/glitches (e.g. verifying
-// the queue-refill cadence in main.c keeps up) independent of any game
-// sound-effect logic. Left on by request while the HSTX sync-loss
-// investigation (CLAUDE.md's "HSTX sync-loss caveat") is ongoing, so every
-// build has an audible check available without needing to flip this each
-// time - set back to 0 once that investigation is closed out.
+// disable. Set to 0 for normal gameplay sound effects.
 #ifndef DEBUG_AUDIO_TEST_TONE
-#define DEBUG_AUDIO_TEST_TONE 1
+#define DEBUG_AUDIO_TEST_TONE 0
 #endif
 
 // Debug: force the emulated CPU's ROM region to read back as all-NOP
 // (0x00) instead of the real arcade ROM (see invaders_machine.c's
-// mem_read()). i8080_step() still runs every real cycle each scanline and
-// RST1/RST2 interrupts still fire and get taken - only real gameplay is
-// removed (VRAM never changes, since nothing ever writes to it; no sound
-// ports ever get hit). Diagnostic only, for isolating "the CPU is
-// executing/taking interrupts every frame" from "real, dynamically-changing
-// game content" in the HSTX sync-loss investigation (see CLAUDE.md's "HSTX
-// sync-loss caveat"). Does not touch anything in roms/. Set to 0 for
-// normal play.
+// mem_read()). Diagnostic only. Set to 0 for normal play.
 #ifndef DEBUG_CPU_NOP_ROM
 #define DEBUG_CPU_NOP_ROM 0
 #endif
 
 // Debug: draw a small on-screen readout (src/video/debug_overlay.c) in the
-// top-left corner - pico_hdmi's actual measured HDMI frame rate (not Core
-// 0's software-paced rate; spikes well above 60 during the HSTX sync-loss
-// bug - see CLAUDE.md's "HSTX sync-loss caveat"), updated live. Lets you
-// watch for the sync-loss symptom directly on the display, without needing
-// a serial connection. Left on by request while the HSTX sync-loss
-// investigation is ongoing (see DEBUG_AUDIO_TEST_TONE above, kept on for
-// the same reason) - set back to 0 once that investigation is closed out.
+// top-left corner - pico_hdmi's actual measured HDMI frame rate. Set to 0 for
+// clean display output.
 #ifndef DEBUG_HDMI_STATUS_OVERLAY
-#define DEBUG_HDMI_STATUS_OVERLAY 1
+#define DEBUG_HDMI_STATUS_OVERLAY 0
 #endif
 
 // Screen orientation, to match however the physical display is actually
