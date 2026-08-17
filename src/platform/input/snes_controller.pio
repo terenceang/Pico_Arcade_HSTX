@@ -1,0 +1,51 @@
+; Gated PIO driver for SNES controller (4021 shift-register protocol).
+; Reads 16 bits per trigger: B, Y, Select, Start, Up, Down, Left, Right, A, X, L, R.
+;
+; Unlike a free-running design, this program is idle (zero GPIO activity, zero cycles
+; spent) until Core 0 explicitly pushes a trigger word into the TX FIFO. Each trigger
+; produces exactly one 16-bit sample, then the SM returns to idle. This keeps PIO/GPIO
+; activity synchronized to Core 0's own cadence (one read per frame) instead of running
+; autonomously and asynchronously in the background.
+
+.program snes_controller
+.side_set 1 ; Side-set bit 0 = Clock pin
+
+.wrap_target
+    pull block          side 0 ; Idle: block here until Core 0 triggers a read
+    set pins, 1         side 0 [11] ; Latch = 1, Clock = 0 (12 us Latch pulse)
+    set pins, 0         side 0     ; Latch = 0, Clock = 0
+    set x, 15           side 0     ; Prepare counter for 16 bits
+
+bitloop:
+    in pins, 1          side 0     ; Read Data bit while Clock is LOW
+    jmp x-- bitloop     side 1     ; Drive Clock HIGH, loop 16 times
+
+    push block          side 0     ; Push 16-bit word to RX FIFO
+.wrap                               ; Back to idle - NOT free-running
+
+% c-sdk {
+static inline void snes_controller_program_init(PIO pio, uint sm, uint offset,
+                                                 uint latch_pin, uint clock_pin, uint data_pin,
+                                                 float clkdiv) {
+    pio_gpio_init(pio, latch_pin);
+    pio_gpio_init(pio, clock_pin);
+    pio_gpio_init(pio, data_pin);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, latch_pin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, clock_pin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, false);
+
+    gpio_pull_up(data_pin);
+
+    pio_sm_config c = snes_controller_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, latch_pin, 1);
+    sm_config_set_sideset_pins(&c, clock_pin);
+    sm_config_set_in_pins(&c, data_pin);
+
+    // Shift right = true so 1st sampled bit lands at LSB (bit 0)
+    sm_config_set_in_shift(&c, true, false, 16);
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

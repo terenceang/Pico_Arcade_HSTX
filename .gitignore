@@ -1,0 +1,53 @@
+build
+build_bouncing_box
+!.vscode/*
+
+# Arcade ROM dumps - copyrighted, not redistributed in this repo.
+# Supply your own legally-obtained dumps - see roms/README.md,
+# roms/invaders/README.md, and roms/pacman/README.md.
+roms/**
+!roms/
+!roms/**/
+!roms/README.md
+!roms/**/README.md
+
+# Sound-effect PCM data (see sounds/README.md) - not vendored, since the
+# real cabinet's sounds came from discrete analog circuitry, not a sample
+# ROM. Supply your own recordings/conversions. CMake embeds them into the
+# firmware image at build time.
+sounds/**
+!sounds/
+!sounds/**/
+!sounds/README.md
+!sounds/**/README.md
+
+# Ignore zip archives (e.g. ROM archives)
+*.zip
+
+# Build and binary artifacts
+*.obj
+*.exe
+*.bin
+*.pdb
+*.ilk
+tools/*.exe
+tools/*.bmp
+
+# AI assistant artifacts, cache, and scratchpads
+.claude/
+.claude.json
+.gemini/
+.antigravity/
+.cursor/
+.cursorrules
+.windsurf/
+.aider*
+*.aider*
+.continue/
+.copilot/
+.chat/
+*.prompt.md
+prompts/
+scratch/
+
+
