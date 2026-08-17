@@ -46,7 +46,7 @@ audio_engine_feed_queue(200)                  HSTX PHY -> GPIO 12-19
 - Synchronizes frame start strictly to hardware VSYNC via `dvi_display_wait_for_vsync()`, guaranteeing a rock-solid 60.000 Hz frame rate.
 - Calls `dvi_display_present_frame()` during vertical blanking, eliminating tearing and buffer data races.
 - Runs the active plugin's CPU emulation once per frame (`plugin->run_frame()`). Space Invaders' plugin runs its Z80-core-hosted 8080 emulation in two clean half-frame blocks internally, firing `RST 1` mid-screen and `RST 2` vblank per the 1978 arcade PCB hardware specification, finishing in ~2 ms and leaving ~14.6 ms of the frame free of shared bus traffic.
-- Renders the active plugin's full arcade VRAM to the 320x240 8bpp write buffer (`plugin->render_frame()`; Space Invaders' `si_render.c` does this in a single linear pass).
+- Renders the active plugin's full arcade VRAM to the 320x240 8bpp write buffer (`plugin->render_frame()`; Space Invaders' `space_invaders_video.c` does this in a single linear pass).
 - Feeds 48 kHz PCM audio samples into the Data Island queue (`audio_engine_feed_queue()`, `src/platform/audio/audio_engine.c`), keeping the queue continuously topped up at 200 packets per frame.
 
 **HSTX Engine** (`pico_hdmi`, Core 1):

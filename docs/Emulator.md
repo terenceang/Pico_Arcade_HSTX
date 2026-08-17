@@ -69,7 +69,7 @@ returned pin mask to service memory/IO reads and writes against
 old, now-removed `i8080_t` had - `z80_t` is pin-driven, and the caller does
 the dispatch).
 
-## The machine (`src/emu/invaders_machine.c`)
+## The machine (`src/emu/space_invaders_machine.c`)
 
 Memory map:
 
@@ -119,7 +119,7 @@ mono stream (`voice_advance()`, nearest-sample resampling from
 `SOUND_SAMPLE_RATE_HZ` to the 48 kHz transport rate), which
 `src/platform/audio/audio_engine.c` then feeds into the HDMI Data Island
 queue. The actual sample data behind each effect is **user-supplied**
-(`sounds/invaders/*.pcm`, gitignored - see `sounds/invaders/README.md`) and embedded at build
+(`roms/space_invaders/*.pcm`, gitignored - see `roms/space_invaders/README.md`) and embedded at build
 time the same way the ROM is; a sound whose file wasn't supplied plays
 nothing rather than failing the build.
 
@@ -174,14 +174,14 @@ whole scanout, leaves ~14.6 ms of each 16.67 ms frame completely free of
 Core 0 bus traffic for Core 1's HSTX engine - the opposite tradeoff from
 what this section previously described as necessary.
 
-## Screen orientation, scaling, overlay & offset (`si_render.c`)
+## Screen orientation, scaling, overlay & offset (`space_invaders_video.c`)
 
-**This entire section was rewritten** to match `src/games/space_invaders/si_render.c`,
+**This entire section was rewritten** to match `src/games/space_invaders/space_invaders_video.c`,
 which is a differently-structured reimplementation than the `src/game.c`
 version this document used to describe (no more `apply_mirror()`,
 `sample_pixel()`, `sample_bit()`, `overlay_color_for_screen_x()`,
 `SI_FB_X_OFFSET`/`SI_ROT_X_OFFSET`/`SI_ROT_CROP`). All settings below live in
-`src/games/space_invaders/si_config.h` (moved from the old top-level
+`src/games/space_invaders/space_invaders_config.h` (moved from the old top-level
 `src/display_config.h`).
 
 The real cabinet's monitor is mounted **vertically** (portrait) - this is
@@ -196,7 +196,7 @@ a fixed relationship (`lx = cx`, `ly = 223 - cy`) that never changes with any
 setting below - `SI_DISPLAY_ROTATION`/`FLIP_H`/`FLIP_V` instead control how
 that native content image maps onto the physical screen.
 
-`si_config.h` exposes:
+`space_invaders_config.h` exposes:
 
 - **`SI_DISPLAY_ROTATION`**: `0`, `90`, `180`, or `270`.
 - **`SI_DISPLAY_FLIP_H`** / **`SI_DISPLAY_FLIP_V`**: mirror the image
@@ -209,12 +209,12 @@ that native content image maps onto the physical screen.
 
 **All 16 rotation/flip combinations are implemented and verified.** An
 earlier pass through this doc (while auditing for plugin-refactor drift)
-found that the version of `si_render.c` inherited from the refactor only
+found that the version of `space_invaders_video.c` inherited from the refactor only
 implemented `SI_DISPLAY_ROTATION` 0/180 and `SI_DISPLAY_FLIP_H`, and that
 `SI_DISPLAY_FLIP_V`/`SI_SCREEN_OFFSET_Y` were defined but silently unused -
 i.e. exactly the kind of subtly-wrong rotation math this project's history
 warns about (see the old, superseded four-formula implementation this
-section used to describe). That's been fixed: `si_render_init()` and
+section used to describe). That's been fixed: `space_invaders_video_init()` and
 `render_arcade_row()` now derive `(lx, ly)` from a single inverse mapping
 covering all four rotations, with flips composed on top in final display
 space. **Verification methodology** (matching this project's own established
@@ -222,14 +222,14 @@ practice of not trusting rotation math from inspection alone): every one of
 the 224x256=57,344 possible VRAM bits was checked, for all 16
 rotation/flip combinations (16 x 57,344 ≈ 917k checks total), against an
 independently-derived standard image-rotation formula (not derived from
-`si_render.c`'s own code) - zero mismatches. This has **not** been verified
+`space_invaders_video.c`'s own code) - zero mismatches. This has **not** been verified
 on real hardware yet (only in simulation) - if you have a physically
 rotated monitor to test against, treat this as the next thing to confirm.
 
 **Color overlay**: the real machine's video hardware only ever outputs
 1-bit black/white - the color you remember from the cabinet came from
 cellophane/acetate strips glued over the glass. `lit_pixel_color(ox)`
-(`si_render.c`) returns red for `ox < 32`, green for
+(`space_invaders_video.c`) returns red for `ox < 32`, green for
 `ox >= SI_CONTENT_W - 40`, white otherwise, gated by
 `SI_ENABLE_COLOR_OVERLAY`; `ox` is the raw output-column position (before
 any rotation/flip/mirror is applied), so the bands always sit at the
@@ -250,7 +250,7 @@ nearest-neighbor stepping (`step_x`/`step_y`, `<<16` fixed point).
 
 **Implementation note on 90/270**: for `SI_DISPLAY_ROTATION` 0/180, which
 output axis reads a VRAM *column* vs. a *bit-within-column* never changes
-(only *which* column/bit, i.e. mirroring), so `si_render_init()` can
+(only *which* column/bit, i.e. mirroring), so `space_invaders_video_init()` can
 precompute byte/bit selection per output column `x` once
 (`s_row_map[]`) and `render_arcade_row()` picks a single VRAM column for
 the whole row. For 90/270 these axis roles **swap** - which VRAM column to
@@ -260,7 +260,7 @@ once per row instead). Both branches are selected entirely at compile time
 (`SI_ROTATED`), so there's no runtime cost for the rotation you didn't pick.
 
 **Screen offset**: `SI_SCREEN_OFFSET_X` shifts `SI_ACTIVE_X_OFFSET` at init
-time (`si_render_init()`); `SI_SCREEN_OFFSET_Y` shifts the equivalent
+time (`space_invaders_video_init()`); `SI_SCREEN_OFFSET_Y` shifts the equivalent
 vertical origin per row (`render_arcade_row()`) - both compose with the
 scaling/centering above rather than replacing it. Pixels pushed outside the
 framebuffer simply clip to the black border.
@@ -270,12 +270,11 @@ framebuffer simply clip to the black border.
 - **Sound effects require user-supplied sample files.** Ports 3/5 are fully
   decoded and wired through to the plugin's voice mixer (see the "Sound
   effects" section above), but the actual PCM data behind each effect isn't
-  vendored - it comes from `sounds/invaders/*.pcm`, which you have to supply yourself
-  (see `sounds/invaders/README.md`). Without those files, the game runs with correct
+  vendored - it comes from `roms/space_invaders/*.pcm`, which you have to supply yourself
+  (see `roms/space_invaders/README.md`). Without those files, the game runs with correct
   sound *timing* but no actual audio.
 - **Only coin/start/fire/left/right are wired**, via BOOTSEL
-  (`src/platform/input/host_input.c`) - there's no real directional/action
-  gamepad yet (see the project [Roadmap](README.md#roadmap)).
+  (`src/platform/input/host_input.c`) and SNES controller (`src/platform/input/snes_controller.c`).
 - **90/270 rotation and both flip settings are simulation-verified but not
   yet confirmed on real hardware** - see "Screen orientation" above.
 - **No watchdog.** Real cabinets reset if the ROM stops periodically

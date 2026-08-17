@@ -4,7 +4,7 @@ build_bouncing_box
 
 # Arcade ROM dumps - copyrighted, not redistributed in this repo.
 # Supply your own legally-obtained dumps - see roms/README.md,
-# roms/invaders/README.md, and roms/pacman/README.md.
+# roms/space_invaders/README.md, and roms/pacman/README.md.
 roms/**
 !roms/
 !roms/**/

@@ -1,12 +1,12 @@
-# Space Invaders Sound Effects (`sounds/invaders/`)
+# Space Invaders Sound Effects (`sounds/space_invaders/` & `roms/space_invaders/`)
 
-This directory contains the user-supplied sound sample files for the 1978 Space Invaders arcade machine.
+This directory contains the user-supplied sound sample files for the 1978 Space Invaders arcade machine (samples can also be placed directly in `roms/space_invaders/`).
 
 The real 1978 arcade cabinet had no digital sound chip—its sound effects were produced by discrete analog circuitry (555 timers, noise circuits, and an SN76477 generator) triggered via I/O ports 3 and 5.
 
 ## Required Sound Files
 
-Place the following 10 raw headerless PCM files directly in this folder:
+Place the following 10 raw headerless PCM files directly in this folder (or in `roms/space_invaders/`):
 
 | File | Port/Bit | Sound Description |
 |---|---|---|
@@ -30,12 +30,12 @@ Place the following 10 raw headerless PCM files directly in this folder:
 ### Converting from WAV Files (e.g. MAME Samples)
 You can use the built-in Python tool to automatically convert any standard WAV sample pack:
 ```sh
-python tools/convert_samples.py <path_to_wav_files_or_directory>
+python tools/convert_samples.py roms/space_invaders/samples/
 ```
 
 Or using `ffmpeg`:
 ```sh
-ffmpeg -i input.wav -ar 32000 -ac 1 -f s16le sounds/invaders/shot.pcm
+ffmpeg -i input.wav -ar 32000 -ac 1 -f s16le roms/space_invaders/shot.pcm
 ```
 
 If any files are omitted, the build will replace them with silent placeholders.

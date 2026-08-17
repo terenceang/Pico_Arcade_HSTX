@@ -7,7 +7,7 @@ A modular arcade machine emulation platform for the [Raspberry Pi Pico 2](https:
 > [!IMPORTANT]
 > **NO COPYRIGHTED ROMS OR AUDIO SAMPLES ARE INCLUDED**
 > - **No Game ROMs Included**: This repository contains emulator engine and hardware interface code only. **No proprietary game ROMs, character PROMs, palette PROMs, or audio sample dumps are included, distributed, or hosted in this repository.**
-> - **User-Supplied Assets**: Users must provide their own legally obtained ROM dumps (`roms/invaders/`, `roms/pacman/`) and audio files (`sounds/`). See [`roms/README.md`](roms/README.md) and [`sounds/README.md`](sounds/README.md). If missing at build time, the build system generates harmless zero-filled placeholders.
+> - **User-Supplied Assets**: Users must provide their own legally obtained ROM dumps (`roms/space_invaders/`, `roms/pacman/`) and audio files (`sounds/` / `roms/`). See [`roms/README.md`](roms/README.md) and [`sounds/README.md`](sounds/README.md). If missing at build time, the build system generates harmless zero-filled placeholders.
 > - **Modular Architecture**: Games are isolated plugins under `src/games/`. The host video and audio subsystem (`src/video/`, `lib/pico_hdmi/`) is fixed platform infrastructure.
 
 **Status:** Rock-solid 60.000 Hz hardware-genlocked 8bpp HDMI video, 48 kHz stereo PCM embedded HDMI audio (Data Islands), modular emulator plugin architecture, CPU emulation cores (8080 & Z80), real SNES controller input, and verified support for multiple arcade titles. See [`docs/Emulator.md`](docs/Emulator.md) and [`docs/Video.md`](docs/Video.md).
@@ -48,7 +48,7 @@ This project targets the [Raspberry Pi Pico SDK](https://github.com/raspberrypi/
 
 > [!NOTE]
 > **Arcade ROMs are NOT included in this repository.**
-> Drop your legally obtained arcade ROM dumps into `roms/invaders/` and `roms/pacman/` before building (see [`roms/README.md`](roms/README.md) for exact file names and checksums). Without them, the project compiles cleanly against placeholder data, but will display a missing ROM notice on screen rather than running the game.
+> Drop your legally obtained arcade ROM dumps into `roms/space_invaders/` and `roms/pacman/` before building (see [`roms/README.md`](roms/README.md) for exact file names and checksums). Without them, the project compiles cleanly against placeholder data, but will display a missing ROM notice on screen rather than running the game.
 
 **Easiest path**: open the folder in VS Code with the [Raspberry Pi Pico extension](https://marketplace.visualstudio.com/items?itemName=raspberry-pi.raspberry-pi-pico) installed - the `.vscode/` config in this repo is already set up for it. Build, then flash via the extension or by copying the generated `.uf2` to the Pico while it's in BOOTSEL mode.
 
@@ -102,7 +102,7 @@ console. It's shown permanently once `DEBUG_TESTCARD`'s own window (if enabled) 
 
 - [x] Hardware HSTX HDMI bring-up on Raspberry Pi Pico 2 (GPIO 12-19)
 - [x] High-performance 8bpp palettized DVI engine & 48 kHz stereo PCM embedded HDMI audio (`lib/pico_hdmi`)
-- [x] Space Invaders arcade machine emulation, running the real Intel 8080 ROM on the cycle-accurate Z80 core (`src/emu/z80.c`)
+- [x] Space Invaders arcade machine emulation, running the real Intel 8080 ROM on the cycle-accurate Z80 core (`src/emu/z80emu.c`)
 - [x] Video RAM → framebuffer conversion (8bpp indexed, letterboxing, color overlay)
 - [x] Software audio mixer & sound-effect trigger decoder (`src/audio/`)
 - [x] ~~SNES controller input wired to `invaders_machine_set_in1()`~~ - removed while investigating the HDMI sync-loss bug below (later confirmed not to have been the cause), then re-added with a gated, non-blocking PIO design (`src/platform/input/snes_controller.{c,h,pio}`) - soak-tested on hardware with the pad actively in use and confirmed not to reintroduce it, see `CLAUDE.md`'s "HSTX sync-loss caveat" (narrowing #10)

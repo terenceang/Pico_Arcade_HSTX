@@ -169,7 +169,7 @@ static void si_plugin_render_missing_rom(uint8_t *fb, uint32_t frame_count) {
         "invaders.f (2KB @ 0x1000)",
         "invaders.e (2KB @ 0x1800)",
     };
-    missing_rom_screen_render_dialog(fb, "** SPACE INVADERS ROMS REQUIRED **", "roms/invaders/",
+    missing_rom_screen_render_dialog(fb, "** SPACE INVADERS ROMS REQUIRED **", "roms/space_invaders/",
                                      files, 4, frame_count);
 }
 

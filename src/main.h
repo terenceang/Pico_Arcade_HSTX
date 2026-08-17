@@ -11,7 +11,7 @@
 #define GAME_PACMAN          1
 
 #ifndef ACTIVE_GAME
-#define ACTIVE_GAME GAME_SPACE_INVADERS
+#define ACTIVE_GAME GAME_PACMAN
 #endif
 
 // ============================================================================
